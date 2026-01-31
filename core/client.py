@@ -82,7 +82,16 @@ class TelegramClientWrapper:
                     logger.error(f"Invalid proxy URL: {e}")
 
             # ========== 创建 Telegram 客户端 ==========
-            self.client = TelegramClient(session_path, api_id, api_hash, proxy=proxy_setting)
+            # connection_retries=None 表示无限重连
+            self.client = TelegramClient(
+                session_path, 
+                api_id, 
+                api_hash, 
+                proxy=proxy_setting,
+                connection_retries=None,
+                retry_delay=5,
+                auto_reconnect=True
+            )
         else:
             # 配置不完整时输出警告
             logger.warning("Telegram Forwarder: api_id/api_hash missing. Please configure them.")
@@ -148,6 +157,7 @@ class TelegramClientWrapper:
 
             # ========== 授权成功 ==========
             logger.info("Telegram Forwarder: Client authorized successfully!")
+            self._authorized = True
 
             # ========== 同步对话框 ==========
             # 获取所有对话框，确保能正确解析频道ID和用户名
@@ -157,6 +167,7 @@ class TelegramClientWrapper:
         except Exception as e:
             # 捕获所有异常并记录日志
             logger.error(f"Telegram Client Error: {e}")
+            self._authorized = False
 
     def is_connected(self):
         """
@@ -166,3 +177,9 @@ class TelegramClientWrapper:
             bool: 如果客户端存在且已连接返回 True，否则返回 False
         """
         return self.client and self.client.is_connected()
+
+    def is_authorized(self):
+        """
+        检查客户端是否已授权
+        """
+        return getattr(self, '_authorized', False) and self.is_connected()

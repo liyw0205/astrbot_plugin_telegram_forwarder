@@ -526,9 +526,20 @@ class Forwarder:
         return "[Unknown Link]"
 
     def _cleanup_files(self, files: list):
+        """
+        清理临时下载的文件
+
+        Args:
+            files: 文件路径列表
+
+        行为：
+            - 删除每个存在的临时文件
+            - 静默处理删除失败（文件可能已被其他进程占用）
+        """
         for f in files:
             if os.path.exists(f):
                 try:
                     os.remove(f)
                 except:
+                    # 删除失败时静默忽略，不中断流程
                     pass

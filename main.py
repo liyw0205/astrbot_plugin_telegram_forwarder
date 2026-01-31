@@ -47,11 +47,26 @@ class Main(star.Star):
         self.config = config
 
         # ========== 设置数据目录 ==========
-        # 使用框架提供的 StarTools.get_data_dir() 获取插件数据目录
-        # 返回 Path 对象，兼容跨平台路径处理
+        # 1. 优先使用 StarTools 分配的标准数据目录
         self.plugin_data_dir = str(StarTools.get_data_dir())
         if not os.path.exists(self.plugin_data_dir):
             os.makedirs(self.plugin_data_dir)
+
+        # 2. 兼容性处理：如果代码目录（旧位置）里有 session，强制覆盖到数据目录
+        # 这可以解决数据目录里有损坏 session 导致无法更新的问题
+        code_dir_session = os.path.join(os.path.dirname(__file__), "user_session.session")
+        data_dir_session = os.path.join(self.plugin_data_dir, "user_session.session")
+        
+        logger.info(f"DEBUG: Checking session migration.\nSrc: {code_dir_session}\nDst: {data_dir_session}")
+
+        if os.path.exists(code_dir_session):
+            try:
+                import shutil
+                # 强制覆盖，确保 relogin.py 生成的新 session 生效
+                shutil.copy2(code_dir_session, data_dir_session)
+                logger.warning(f"Force migrated session from code dir to data dir.")
+            except Exception as e:
+                logger.error(f"Failed to migrate session: {e}")
 
         # ========== 初始化核心组件 ==========
         # Storage: 负责持久化存储频道消息ID
@@ -97,7 +112,7 @@ class Main(star.Star):
         await self.client_wrapper.start()
 
         # 检查客户端是否成功连接并授权
-        if self.client_wrapper.is_connected():
+        if self.client_wrapper.is_authorized():
             # ========== 启动定时调度器 ==========
             # 仅当插件配置为启用状态时才启动
             if self.config.get("enabled", True):
