@@ -489,9 +489,9 @@ class Forwarder:
             try:
                 # Use proxy for upload if configured (Timeout increased to 5 mins)
                 async with httpx.AsyncClient(proxy=self.proxy_url, timeout=300.0) as uploader:
-                    # Check file size for chunked upload (> 5MB)
-                    if os.path.getsize(fpath) > 5 * 1024 * 1024:
-                        logger.info(f"File > 5MB, using Chunked Upload for {fpath}...")
+                    # Check file size for chunked upload (> 20MB to reduce KV writes)
+                    if os.path.getsize(fpath) > 20 * 1024 * 1024:
+                        logger.info(f"File > 20MB, using Chunked Upload for {fpath}...")
                         link = await self._upload_chunked(uploader, hosting_url, fpath)
                     else:
                         # 普通上传
@@ -617,7 +617,7 @@ class Forwarder:
         Init -> Chunks -> Merge -> Poll
         """
         import math
-        chunk_size = 5 * 1024 * 1024  # 5MB
+        chunk_size = 20 * 1024 * 1024  # 20MB (Increased to save KV quota)
         file_size = os.path.getsize(fpath)
         total_chunks = math.ceil(file_size / chunk_size)
         original_filename = os.path.basename(fpath)
