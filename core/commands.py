@@ -22,7 +22,7 @@ class PluginCommands:
 
         channels.append(channel)
         self.config["source_channels"] = channels
-        self.context.save_config() # 保存配置
+        self.config.save_config() # 保存配置
         yield event.plain_result(f"✅ 已添加频道 {channel} 到监控列表。")
 
     async def remove_channel(self, event: AstrMessageEvent, channel: str):
@@ -38,7 +38,7 @@ class PluginCommands:
 
         channels.remove(channel)
         self.config["source_channels"] = channels
-        self.context.save_config()
+        self.config.save_config()
         yield event.plain_result(f"✅ 已移除频道 {channel}。")
 
     async def list_channels(self, event: AstrMessageEvent):
