@@ -23,6 +23,8 @@ from ..common.text_tools import clean_telegram_text
 from ..common.storage import Storage
 from .client import TelegramClientWrapper
 
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
 class Forwarder:
     """
     消息转发器核心类
@@ -338,18 +340,39 @@ class Forwarder:
 
             # ========== 处理文件（上传或 Base64） ==========
             for fpath in local_files:
-                file_node = await self._process_one_file(fpath)
-                if file_node:
-                    message.append(file_node)
+                file_nodes = await self._process_one_file(fpath)
+                if file_nodes:
+                    message.extend(file_nodes)
 
+            # ========== 发送到 QQ ==========
             # ========== 发送到 QQ ==========
             url = self.config.get("napcat_api_url", "http://127.0.0.1:3000/send_group_msg")
             async with httpx.AsyncClient() as http:
                  for gid in qq_groups:
                      if not gid: continue
                      try:
-                        await http.post(url, json={"group_id": gid, "message": message}, timeout=30)
-                        logger.info(f"Forwarded {msg.id} to QQ group {gid}")
+                        # 检查是否有 record 节点
+                        has_record = any(node.get("type") == "record" for node in message)
+                        
+                        if has_record:
+                            # 如果有语音，先发送文本部分，再单独发送语音
+                            # 1. 提取文本节点
+                            text_nodes = [node for node in message if node.get("type") == "text"]
+                            if text_nodes:
+                                await http.post(url, json={"group_id": gid, "message": text_nodes}, timeout=30)
+                                await asyncio.sleep(1) # 稍微延迟，保证顺序
+
+                            # 2. 提取并发送语音节点
+                            record_nodes = [node for node in message if node.get("type") == "record"]
+                            for rec_node in record_nodes:
+                                await http.post(url, json={"group_id": gid, "message": [rec_node]}, timeout=30)
+                            
+                            logger.info(f"Forwarded {msg.id} to QQ group {gid} (Split Text/Record)")
+                        else:
+                            # 普通消息直接发送
+                            await http.post(url, json={"group_id": gid, "message": message}, timeout=30)
+                            logger.info(f"Forwarded {msg.id} to QQ group {gid}")
+
                      except Exception as e:
                         logger.error(f"Failed to send to QQ group {gid}: {e}")
 
@@ -385,17 +408,23 @@ class Forwarder:
             return local_files
 
         # ========== 文件大小检查 ==========
-        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
         if hasattr(msg.media, 'document') and hasattr(msg.media.document, 'size'):
             if msg.media.document.size > MAX_FILE_SIZE:
                 logger.warning(f"File too large ({msg.media.document.size} bytes), skipping download.")
                 return local_files
 
         # ========== 判断是否应该下载 ==========
-        # 当前只下载图片，不下载视频/文档
+        # 支持图片和音频
         is_photo = hasattr(msg, 'photo') and msg.photo
+        is_audio = False
+        
+        # 检查音频/语音
+        if msg.file and msg.file.mime_type:
+            mime = msg.file.mime_type
+            if mime.startswith('audio/') or mime == 'application/ogg':
+                is_audio = True
 
-        should_download = is_photo
+        should_download = is_photo or is_audio
 
         if should_download:
              # 定义进度回调函数
@@ -420,23 +449,21 @@ class Forwarder:
 
         return local_files
 
-    async def _process_one_file(self, fpath: str) -> Optional[dict]:
+    async def _process_one_file(self, fpath: str) -> list:
         """
-        将本地文件转换为 NapCat 消息节点
+        将本地文件转换为 NapCat 消息节点列表
 
         Args:
             fpath: 文件路径
 
         Returns:
-            dict: NapCat 消息节点，格式如 {"type": "image", "data": {...}}
+            list: NapCat 消息节点列表，每项如 {"type": "image", "data": {...}}
 
         处理策略：
             1. 图片文件（<5MB）：使用 Base64 编码直接嵌入
-            2. 其他文件：上传到文件托管服务（如果配置）
-            3. 无托管：返回文件名占位符
-
-        支持的图片格式：
-            .jpg, .jpeg, .png, .webp, .gif, .bmp
+            2. 音频文件：上传后生成 [语音消息 + 链接]
+            3. 其他文件：上传到文件托管服务（如果配置）
+            4. 无托管：返回文件名占位符
         """
         ext = os.path.splitext(fpath)[1].lower()
         hosting_url = self.config.get("file_hosting_url")
@@ -449,7 +476,7 @@ class Forwarder:
                 with open(fpath, "rb") as image_file:
                     encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
                 # NapCat 图片消息格式
-                return {"type": "image", "data": {"file": f"base64://{encoded_string}"}}
+                return [{"type": "image", "data": {"file": f"base64://{encoded_string}"}}]
             else:
                 logger.info("Image too large for base64, trying upload...")
 
@@ -457,27 +484,54 @@ class Forwarder:
         if hosting_url:
             try:
                 async with httpx.AsyncClient() as uploader:
-                    # 构建 multipart/form-data 上传
-                    with open(fpath, "rb") as f:
-                        files = {'file': (os.path.basename(fpath), f, 'application/octet-stream')}
-                        # 上传超时设置为 120 秒（适应慢速网络）
-                        resp = await uploader.post(hosting_url, files=files, timeout=120)
+                    # Check file size for chunked upload (> 5MB)
+                    if os.path.getsize(fpath) > 5 * 1024 * 1024:
+                        logger.info(f"File > 5MB, using Chunked Upload for {fpath}...")
+                        link = await self._upload_chunked(uploader, hosting_url, fpath)
+                    else:
+                        # 普通上传
+                        # 构建 multipart/form-data 上传
+                        with open(fpath, "rb") as f:
+                            files = {'file': (os.path.basename(fpath), f, 'application/octet-stream')}
+                            
+                            # 添加目录参数，将其作为 Query Param 传递
+                            # httpx 会自动合并 url 中的 query 和 params 参数
+                            params = {'uploadFolder': 'Telegram/Media'}
+                            
+                            # 上传超时设置为 120 秒（适应慢速网络）
+                            resp = await uploader.post(hosting_url, files=files, params=params, timeout=120)
+    
+                            if resp.status_code == 200:
+                                # 提取上传后的 URL
+                                link = self._extract_upload_url(resp.json(), hosting_url)
+                            else:
+                                logger.error(f"Upload failed: {resp.status_code} {resp.text}")
+                                link = None
 
-                        if resp.status_code == 200:
-                            # 提取上传后的 URL
-                            link = self._extract_upload_url(resp.json(), hosting_url)
-                            return {"type": "text", "data": {"text": f"\n[Media Link: {link}]"}}
-                        else:
-                             # 上传失败
-                             return {"type": "text", "data": {"text": f"\n[Upload Failed: HTTP {resp.status_code}]"}}
+                    if link:
+                        # 如果是音频，尝试发送语音预览 + 链接
+                        if ext in [".mp3", ".ogg", ".wav", ".m4a", ".flac", ".amr"]:
+                                logger.info(f"Audio Link Generated: {link}")
+                                return [
+                                    {"type": "text", "data": {"text": f"\n[Audio: {os.path.basename(fpath)}]\n🔗 Link: {link}\n"}},
+                                    {"type": "record", "data": {"file": link}}
+                                ]
+                        
+                        # 普通文件/大图片
+                        return [{"type": "text", "data": {"text": f"\n[Media Link: {link}]"}}]
+                    else:
+                         # 上传失败
+                         status = resp.status_code if 'resp' in locals() else "Unknown"
+                         return [{"type": "text", "data": {"text": f"\n[Upload Failed: HTTP {status}]"}}]
             except Exception as e:
                  logger.error(f"Upload Error: {e}")
-                 return {"type": "text", "data": {"text": f"\n[Media File: {os.path.basename(fpath)}] (Upload Failed)"}}
+                 return [{"type": "text", "data": {"text": f"\n[Media File: {os.path.basename(fpath)}] (Upload Failed)"}}]
+
 
         # ========== 3. 回退方案 ==========
         # 无托管服务时，返回文件名占位符
         fname = os.path.basename(fpath)
-        return {"type": "text", "data": {"text": f"\n[Media File: {fname}] (Too large/No hosting)"}}
+        return [{"type": "text", "data": {"text": f"\n[Media File: {fname}] (Too large/No hosting)"}}]
 
     def _extract_upload_url(self, res_json: dict, base_url: str) -> str:
         """
@@ -513,7 +567,10 @@ class Forwarder:
             lambda r: r.get("url"),
 
             # 标准 API 格式：嵌套在 data 中
-            lambda r: r.get("data", {}).get("url") if isinstance(r.get("data"), dict) else None
+            lambda r: r.get("data", {}).get("url") if isinstance(r.get("data"), dict) else None,
+
+            # 4. Chunked Upload polling result (Dict with result List)
+            lambda r: root_url + r["result"][0]["src"] if isinstance(r, dict) and "result" in r and isinstance(r["result"], list) and r["result"] and "src" in r["result"][0] else None
         ]
 
         # ========== 依次尝试提取器 ==========
@@ -534,6 +591,125 @@ class Forwarder:
         # ========== 所有格式都不匹配 ==========
         logger.warning(f"Unknown upload response format: {res_json}")
         return "[Unknown Link]"
+
+    async def _upload_chunked(self, uploader: httpx.AsyncClient, hosting_url: str, fpath: str) -> Optional[str]:
+        """
+        Chunked upload for large files.
+        Init -> Chunks -> Merge -> Poll
+        """
+        import math
+        chunk_size = 5 * 1024 * 1024  # 5MB
+        file_size = os.path.getsize(fpath)
+        total_chunks = math.ceil(file_size / chunk_size)
+        original_filename = os.path.basename(fpath)
+        # Simple mimetype guess
+        ext = os.path.splitext(fpath)[1].lower()
+        original_filetype = "application/octet-stream"
+        if ext == ".flac": original_filetype = "audio/flac"
+        elif ext == ".mp3": original_filetype = "audio/mpeg"
+        
+        try:
+            # 1. Init (Hybrid: Query+Body)
+            params = {
+                'uploadFolder': 'Telegram/Media',
+                'initChunked': 'true'
+            }
+            data = {
+                'totalChunks': str(total_chunks),
+                'originalFileName': original_filename,
+                'originalFileType': original_filetype
+            }
+            dummy_files = {'_force_multipart': ('', b'')}
+            
+            resp = await uploader.post(hosting_url, params=params, data=data, files=dummy_files, timeout=30)
+            if resp.status_code != 200:
+                logger.error(f"Chunked Init failed: {resp.status_code} {resp.text}")
+                return None
+            
+            resp_data = resp.json()
+            upload_id = None
+            if isinstance(resp_data, dict):
+                 upload_id = resp_data.get("data") or resp_data.get("uploadId")
+            if not upload_id:
+                 logger.error(f"Chunked Init no uploadId: {resp.text}")
+                 return None
+
+            # 2. Upload Chunks
+            with open(fpath, "rb") as f:
+                for i in range(total_chunks):
+                    chunk_data = f.read(chunk_size)
+                    q_params = {'uploadFolder': 'Telegram/Media', 'chunked': 'true'}
+                    b_data = {
+                        'uploadId': upload_id,
+                        'chunkIndex': str(i),
+                        'totalChunks': str(total_chunks),
+                        'originalFileName': original_filename,
+                        'originalFileType': original_filetype
+                    }
+                    files = {'file': (original_filename, chunk_data, original_filetype)}
+                    
+                    c_resp = await uploader.post(hosting_url, params=q_params, data=b_data, files=files, timeout=120)
+                    if c_resp.status_code != 200:
+                        logger.error(f"Chunk {i} failed: {c_resp.status_code} {c_resp.text}")
+                        return None
+            
+            # 3. Merge
+            m_params = {'uploadFolder': 'Telegram/Media', 'chunked': 'true', 'merge': 'true'}
+            m_data = {
+                'uploadId': upload_id,
+                'totalChunks': str(total_chunks),
+                'originalFileName': original_filename,
+                'originalFileType': original_filetype
+            }
+            dummy_files_m = {'_force_multipart': ('', b'')}
+            m_resp = await uploader.post(hosting_url, params=m_params, data=m_data, files=dummy_files_m, timeout=60)
+            
+            final_resp = None
+            if m_resp.status_code == 200:
+                final_resp = m_resp.json()
+            elif m_resp.status_code == 202:
+                # Async polling
+                check_url = m_resp.json().get("statusCheckUrl")
+                if not check_url:
+                     check_url = f"/upload?uploadId={upload_id}&statusCheck=true&chunked=true&merge=true"
+                
+                # Handle relative URL
+                if check_url.startswith("/"):
+                     from urllib.parse import urlparse
+                     parsed = urlparse(hosting_url)
+                     root = f"{parsed.scheme}://{parsed.netloc}"
+                     check_url = root + check_url
+                
+                # Append AuthCode if missing but present in hosting_url
+                if "authCode=" not in check_url and "authCode=" in hosting_url:
+                      auth_code = hosting_url.split("authCode=")[1].split("&")[0]
+                      if "?" in check_url: check_url += f"&authCode={auth_code}"
+                      else: check_url += f"?authCode={auth_code}"
+                
+                # Poll
+                for retry in range(20): # Retry 20 times * 2s = 40s
+                    await asyncio.sleep(2)
+                    try:
+                        poll_resp = await uploader.get(check_url, timeout=30)
+                        if poll_resp.status_code == 200:
+                            json_data = poll_resp.json()
+                            if json_data.get("status") == "success" or json_data.get("url"):
+                                final_resp = json_data
+                                break
+                        elif poll_resp.status_code != 202:
+                            logger.error(f"Poll failed: {poll_resp.status_code}")
+                            return None
+                    except Exception as e:
+                        logger.error(f"Poll error: {e}")
+            
+            if final_resp:
+                return self._extract_upload_url(final_resp, hosting_url)
+            else:
+                logger.error("Merge failed or timed out")
+                return None
+        except Exception as e:
+            logger.error(f"Chunked Upload Exception: {e}")
+            return None
 
     def _cleanup_files(self, files: list):
         """
