@@ -23,7 +23,7 @@ from ..common.text_tools import clean_telegram_text
 from ..common.storage import Storage
 from .client import TelegramClientWrapper
 
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 
 class Forwarder:
     """
@@ -48,6 +48,8 @@ class Forwarder:
         self.client = client_wrapper.client  # 快捷访问
         self.plugin_data_dir = plugin_data_dir
 
+
+
     async def check_updates(self):
         """
         检查所有配置的频道更新
@@ -66,6 +68,8 @@ class Forwarder:
             - 单个频道处理失败不影响其他频道
             - 每个频道的错误会被记录日志
         """
+        self.proxy_url = self.config.get("proxy")  # Get proxy from config
+        
         # 检查连接状态
         if not self.client_wrapper.is_connected():
             return
@@ -393,7 +397,7 @@ class Forwarder:
             list: 下载的文件路径列表
 
         安全措施：
-            - 文件大小限制：50MB
+            - 文件大小限制：500MB
             - 只下载图片（photo），不下载视频/文档
             - 下载进度回调（每20%输出一次）
 
@@ -483,7 +487,8 @@ class Forwarder:
         # ========== 2. 上传到文件托管服务 ==========
         if hosting_url:
             try:
-                async with httpx.AsyncClient() as uploader:
+                # Use proxy for upload if configured (Timeout increased to 5 mins)
+                async with httpx.AsyncClient(proxy=self.proxy_url, timeout=300.0) as uploader:
                     # Check file size for chunked upload (> 5MB)
                     if os.path.getsize(fpath) > 5 * 1024 * 1024:
                         logger.info(f"File > 5MB, using Chunked Upload for {fpath}...")
@@ -495,18 +500,30 @@ class Forwarder:
                             files = {'file': (os.path.basename(fpath), f, 'application/octet-stream')}
                             
                             # 添加目录参数，将其作为 Query Param 传递
-                            # httpx 会自动合并 url 中的 query 和 params 参数
                             params = {'uploadFolder': 'Telegram/Media'}
                             
-                            # 上传超时设置为 120 秒（适应慢速网络）
-                            resp = await uploader.post(hosting_url, files=files, params=params, timeout=120)
-    
-                            if resp.status_code == 200:
-                                # 提取上传后的 URL
-                                link = self._extract_upload_url(resp.json(), hosting_url)
-                            else:
-                                logger.error(f"Upload failed: {resp.status_code} {resp.text}")
-                                link = None
+                            # Retry logic for regular upload
+                            for attempt in range(3):
+                                try:
+                                    # 上传超时设置为 120 秒（适应慢速网络）
+                                    # Seek file to start for retries
+                                    f.seek(0)
+                                    resp = await uploader.post(hosting_url, files=files, params=params, timeout=120)
+
+                                    if resp.status_code == 200:
+                                        # 提取上传后的 URL
+                                        link = self._extract_upload_url(resp.json(), hosting_url)
+                                        break # Success
+                                    else:
+                                        logger.error(f"Upload failed (Attempt {attempt+1}): {resp.status_code} {resp.text}")
+                                        link = None
+                                        if attempt == 2: break
+                                        await asyncio.sleep(2)
+                                except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.WriteError, httpx.ReadTimeout) as e:
+                                    logger.warning(f"Upload network error (Attempt {attempt+1}): {e}")
+                                    link = None
+                                    if attempt == 2: break
+                                    await asyncio.sleep(2)
 
                     if link:
                         # 如果是音频，尝试发送语音预览 + 链接
@@ -524,7 +541,7 @@ class Forwarder:
                          status = resp.status_code if 'resp' in locals() else "Unknown"
                          return [{"type": "text", "data": {"text": f"\n[Upload Failed: HTTP {status}]"}}]
             except Exception as e:
-                 logger.error(f"Upload Error: {e}")
+                 logger.error(f"Upload Error: {type(e).__name__}: {e}")
                  return [{"type": "text", "data": {"text": f"\n[Media File: {os.path.basename(fpath)}] (Upload Failed)"}}]
 
 
@@ -650,10 +667,20 @@ class Forwarder:
                     }
                     files = {'file': (original_filename, chunk_data, original_filetype)}
                     
-                    c_resp = await uploader.post(hosting_url, params=q_params, data=b_data, files=files, timeout=120)
-                    if c_resp.status_code != 200:
-                        logger.error(f"Chunk {i} failed: {c_resp.status_code} {c_resp.text}")
-                        return None
+                    # Retry logic for each chunk
+                    for attempt in range(3):
+                        try:
+                            c_resp = await uploader.post(hosting_url, params=q_params, data=b_data, files=files, timeout=300)
+                            if c_resp.status_code != 200:
+                                logger.error(f"Chunk {i} failed (Attempt {attempt+1}): {c_resp.status_code} {c_resp.text}")
+                                if attempt == 2: return None # Give up after 3 failed attempts
+                                await asyncio.sleep(2)
+                                continue
+                            break # Success
+                        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.WriteError, httpx.ReadTimeout) as e:
+                            logger.warning(f"Chunk {i} network error (Attempt {attempt+1}): {e}")
+                            if attempt == 2: return None # Give up after 3 failed attempts
+                            await asyncio.sleep(2)
             
             # 3. Merge
             m_params = {'uploadFolder': 'Telegram/Media', 'chunked': 'true', 'merge': 'true'}
@@ -710,7 +737,7 @@ class Forwarder:
                 logger.error("Merge failed or timed out")
                 return None
         except Exception as e:
-            logger.error(f"Chunked Upload Exception: {e}")
+            logger.error(f"Chunked Upload Exception: {type(e).__name__}: {e}")
             return None
 
     def _cleanup_files(self, files: list):
