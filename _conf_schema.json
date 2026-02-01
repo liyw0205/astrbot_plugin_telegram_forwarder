@@ -4,6 +4,18 @@
         "type": "bool",
         "default": true
     },
+    "enable_forward_to_qq": {
+        "description": "开启 QQ 转发",
+        "type": "bool",
+        "default": true,
+        "hint": "是否将消息转发到 QQ 群"
+    },
+    "enable_forward_to_tg": {
+        "description": "开启 TG 转发",
+        "type": "bool",
+        "default": false,
+        "hint": "是否将消息转发到目标 Telegram 频道"
+    },
     "api_id": {
         "description": "App API ID",
         "type": "int",

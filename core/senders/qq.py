@@ -29,6 +29,10 @@ class QQSender:
         """
         qq_groups = self.config.get("target_qq_group")
         napcat_url = self.config.get("napcat_api_url")
+        enable_qq = self.config.get("enable_forward_to_qq", True)
+
+        if not enable_qq:
+            return
 
         if not (qq_groups and napcat_url) or not msgs:
             return
