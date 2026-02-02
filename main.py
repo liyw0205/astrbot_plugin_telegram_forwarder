@@ -52,7 +52,6 @@ class Main(star.Star):
         self.config = config
 
         # ========== 设置数据目录 ==========
-<<<<<<< HEAD
         try:
             from pathlib import Path
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -69,10 +68,6 @@ class Main(star.Star):
                 "Could not import get_astrbot_data_path, using default StarTools path."
             )
             self.plugin_data_dir = str(StarTools.get_data_dir())
-
-=======
-        self.plugin_data_dir = StarTools.get_data_dir()
->>>>>>> pr-1
         if not os.path.exists(self.plugin_data_dir):
             os.makedirs(self.plugin_data_dir)
 
@@ -101,11 +96,6 @@ class Main(star.Star):
 
                 if should_migrate:
                     try:
-<<<<<<< HEAD
-                        import shutil
-
-=======
->>>>>>> pr-1
                         shutil.copy2(src, dst)
                         logger.warning(
                             f"[Migration] Moved {filename} from plugin dir to data dir."
