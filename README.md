@@ -26,6 +26,24 @@
 - **api_id** / **api_hash**: **(必填)** Telegram API 凭证（可使用官方公开 ID `17349` / `344583e45741c457fe1862106095a5eb`）。
 - **proxy**: 代理地址，例如 `http://127.0.0.1:7897`。
 
+### 如何获取 Session 文件 (重要)
+
+由于 Docker/后台环境无法直接输入验证码，你需要使用插件自带的工具生成会话文件：
+
+1.  进入插件目录：
+    ```bash
+    cd data/plugins/astrbot_plugin_telegram_forwarder
+    ```
+2.  运行登录工具（确保安装了 pip 依赖）：
+    ```bash
+    python relogin.py
+    ```
+3.  按提示输入手机号（带国家代码，如 `+86...`）和验证码。
+4.  生成的 `user_session.session` 会自动保存到正确的位置 (`data/plugin_data/...`)。
+5.  重启 AstrBot 即可生效。
+
+> **提示**: `relogin.py` 会自动读取 `data/plugins/astrbot_plugin_telegram_forwarder/config.json` 中的 API ID 等配置，请确保先配置好插件。
+
 ### 频道配置
 - **source_channels**: 源频道列表。
   - `GoogleNews`: 从最新消息开始。
@@ -42,9 +60,10 @@
   - `target_qq_group`: 目标 QQ 群号列表 `[123456]`。
   - `napcat_api_url`: NapCat API 地址 (例如 `http://127.0.0.1:3000/send_group_msg`)。
   - `file_hosting_url`: **(推荐)** 文件托管/图床地址。
-    - 用于上传大文件和音频。
-    - 支持带 AuthCode 的 URL: `https://.../upload?authCode=xxx`。
-    - 若未配置，大文件将只显示文件名。
+    - **支持项目**: [CloudFlare-ImgBed (MarSeventh)](https://github.com/MarSeventh/CloudFlare-ImgBed)
+    - **配置示例**: `https://your-domain.com/upload?authCode=your_password`
+    - **作用**: 用于上传大文件 (>20MB) 和音频，支持分片上传。
+    - 若未配置，大文件将无法生成下载链接。
 
 > [!NOTE]
 > 如果只开启 `enable_forward_to_qq`，则不需要配置 Telegram 的 `target_channel` 和 `bot_token`。消息将直接由机器人监听并转发到 QQ。
