@@ -42,7 +42,7 @@ def clean_telegram_text(text: str) -> str:
     # 2. 正则主要内容清洗 (新增)
     # 去除特定的元数据文本
     patterns = [
-        r"\* 此原图经过处理",  # 指定去除的提示
+        r"[\*＊\-]?\s*此原图经过处理.*",  # 指定去除的提示 (支持不同符号和空格)
         r"投稿 by .*",      # 指定去除的投稿信息
     ]
     for pattern in patterns:

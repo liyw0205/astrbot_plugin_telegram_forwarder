@@ -35,13 +35,57 @@
         "hint": "登录用的手机号（国际格式，如 +86138...），首次运行时需要。"
     },
     "source_channels": {
-        "description": "源频道用户名列表",
+        "description": "源频道配置列表",
         "type": "list",
-        "item_type": "string",
-        "hint": "不需要加 @，例如 `GoogleNews`。必须是公开频道。",
+        "item_type": "object",
+        "items": {
+            "channel_username": {
+                "type": "string",
+                "description": "频道用户名 (不带@)"
+            },
+            "start_time": {
+                "type": "string",
+                "description": "起始日期 (YYYY-MM-DD)",
+                "hint": "留空则仅转发新消息，填具体日期则补发旧消息"
+            },
+            "check_interval": {
+                "type": "int",
+                "description": "检测间隔 (秒)",
+                "default": 60,
+                "hint": "该频道专用的检测频率"
+            },
+            "msg_limit": {
+                "type": "int",
+                "description": "单次上限",
+                "default": 10,
+                "hint": "每次检测最多处理几条消息，建议设为 5~20"
+            },
+            "config_preset": {
+                "type": "string",
+                "description": "预设配置 (覆盖上方设置)",
+                "options": [
+                    "",
+                    "2025-12-01|60|3"
+                ],
+                "default": "",
+                "hint": "选择预设配置快捷填入 (格式: 日期|间隔|数量)，选中后将忽略上方的日期、间隔和数量设置"
+            }
+        },
+        "block_default": {
+            "channel_username": "heyTchuang",
+            "start_time": "",
+            "check_interval": 60,
+            "msg_limit": 10
+        },
         "default": [
-            "heyTchuang"
+            {
+                "channel_username": "heyTchuang",
+                "start_time": "",
+                "check_interval": 60,
+                "msg_limit": 10
+            }
         ],
+        "hint": "添加并配置需要转发的 Telegram 频道",
         "obvious_hint": true
     },
     "check_interval": {

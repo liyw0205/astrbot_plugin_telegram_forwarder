@@ -83,28 +83,71 @@ class Forwarder:
 
         async def process_one(cfg):
             try:
-                channel_name = cfg
+                channel_name = ""
                 start_date = None
-                interval = 0
+                default_interval = 0 # Default interval if not specified
+                interval = default_interval
                 msg_limit = 20  # 默认一次处理20条
 
                 # 解析频道配置
-                # 格式：channel_name | start_date | interval | limit
-                # 示例：xiaoshuwu | 2025-01-01 | 60 | 5
-                if "|" in cfg:
-                    parts = [p.strip() for p in cfg.split("|")]
-                    channel_name = parts[0]
+                if isinstance(cfg, dict):
+                    # New config format
+                    channel_name = cfg.get("channel_username", "")
+                    if not channel_name:
+                        logger.warning(f"Skipping channel config with missing 'channel_username': {cfg}")
+                        return
+                    
+                    s_time = cfg.get("start_time", "")
+                    if s_time:
+                        try:
+                            start_date = datetime.strptime(s_time, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                        except ValueError:
+                            logger.error(f"Invalid date format for {channel_name}: {s_time}")
 
+                    interval = cfg.get("check_interval", default_interval)
+                    msg_limit = cfg.get("msg_limit", 20)
+
+                    # Handle config_preset (overrides the above if set)
+                    preset = cfg.get("config_preset", "")
+                    if preset:
+                        try:
+                            # preset format: date|interval|limit
+                            p_parts = [p.strip() for p in preset.split("|")]
+                            if len(p_parts) >= 1 and p_parts[0]:
+                                try:
+                                    start_date = datetime.strptime(p_parts[0], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                except ValueError:
+                                    logger.warning(f"Invalid date in preset {preset} for {channel_name}")
+                            
+                            if len(p_parts) >= 2 and p_parts[1].isdigit():
+                                interval = int(p_parts[1])
+                            
+                            if len(p_parts) >= 3 and p_parts[2].isdigit():
+                                msg_limit = int(p_parts[2])
+                                
+                            logger.info(f"Applied preset {preset} for {channel_name}: date={start_date}, int={interval}, limit={msg_limit}")
+                        except Exception as e:
+                            logger.error(f"Error applying preset {preset} for {channel_name}: {e}")
+                
+                elif isinstance(cfg, str):
+                    # Legacy string format: name|date|interval|limit
+                    # 格式：channel_name | start_date | interval | limit
+                    # 示例：xiaoshuwu | 2025-01-01 | 60 | 5
+                    parts = [p.strip() for p in cfg.split("|")]
+                    if not parts:
+                        logger.warning(f"Skipping invalid channel string config: {cfg}")
+                        return
+                    
+                    channel_name = parts[0]
                     ints_found = []
+
                     for part in parts[1:]:
                         if not part:
                             continue
                         # 尝试解析为日期
                         if "-" in part and not start_date:
                             try:
-                                start_date = datetime.strptime(
-                                    part, "%Y-%m-%d"
-                                ).replace(tzinfo=timezone.utc)
+                                start_date = datetime.strptime(part, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                                 continue
                             except:
                                 pass
@@ -119,13 +162,20 @@ class Forwarder:
                     if len(ints_found) >= 2:
                         msg_limit = ints_found[1]
                 else:
-                    channel_name = cfg.strip()
+                    logger.warning(f"Skipping unknown channel config type: {type(cfg)} - {cfg}")
+                    return  # Unknown type
+
+                # Ensure channel_name is set
+                if not channel_name:
+                    logger.warning(f"Channel name could not be determined for config: {cfg}")
+                    return
 
                 # 检查间隔
                 now = datetime.now().timestamp()
                 last_check = self._channel_last_check.get(channel_name, 0)
+                # 使用该频道配置的间隔判断
                 if now - last_check < interval:
-                    return  # 还没到时间
+                    return # 还没到时间
 
                 # 获取该频道的锁
                 lock = self._get_channel_lock(channel_name)
@@ -274,6 +324,7 @@ class Forwarder:
                 self.storage.update_last_id(channel_name, max_id)
 
         # 遍历消息进行批处理
+        pending_batch = []
         for msg in new_messages:
             try:
                 if msg.grouped_id:
