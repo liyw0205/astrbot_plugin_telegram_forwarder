@@ -43,6 +43,7 @@ class QQSender:
         qq_groups = self.config.get("target_qq_group")
         napcat_url = self.config.get("napcat_api_url")
         enable_qq = self.config.get("enable_forward_to_qq", True)
+        exclude_text_on_media = self.config.get("exclude_text_on_media", False)
 
         if not enable_qq:
             return
@@ -99,7 +100,11 @@ class QQSender:
 
                             # ========== 3. 构建 AstrBot 消息链 ==========
                             message_chain = MessageChain()
-                            if final_text.strip():
+                            
+                            # 如果配置了媒体消息排除文本，且确实有媒体，则不添加文本
+                            if exclude_text_on_media and all_local_files:
+                                pass
+                            elif final_text.strip():
                                 message_chain.chain.append(Plain(final_text))
 
                             for fpath in all_local_files:
@@ -162,7 +167,11 @@ class QQSender:
 
                                 # ========== 3. 构建消息载荷 ==========
                                 message = []
-                                if final_text.strip():
+                                
+                                # 如果配置了媒体消息排除文本，且确实有媒体，则不添加文本
+                                if exclude_text_on_media and all_local_files:
+                                    pass
+                                elif final_text.strip():
                                     message.append({"type": "text", "data": {"text": final_text}})
 
                                 for fpath in all_local_files:
