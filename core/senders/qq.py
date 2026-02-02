@@ -118,6 +118,8 @@ class QQSender:
 
                                 if has_record:
                                     # 语音拆分发送逻辑
+                                    # 注意：移除了中间的 sleep(1)，确保文本和语音原子化发送
+                                    # 避免被其他批次的消息插队
                                     text_nodes = [
                                         node
                                         for node in message
@@ -129,7 +131,8 @@ class QQSender:
                                             json={"group_id": gid, "message": text_nodes},
                                             timeout=60,
                                         )
-                                        await asyncio.sleep(1)
+                                        # 移除延迟，让文本和语音连续发送
+                                        # await asyncio.sleep(1)  # ❌ 已移除
 
                                     record_nodes = [
                                         node
@@ -144,7 +147,7 @@ class QQSender:
                                         )
 
                                     logger.info(
-                                        f"Forwarded album/msg to QQ group {gid} (Split)"
+                                        f"Forwarded album/msg to QQ group {gid} (Split without delay)"
                                     )
                                 else:
                                     # 普通/相册消息直接发送
