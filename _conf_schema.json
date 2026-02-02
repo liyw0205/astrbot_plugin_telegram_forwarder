@@ -16,6 +16,12 @@
         "default": false,
         "hint": "是否将消息转发到目标 Telegram 频道"
     },
+    "exclude_text_on_media": {
+        "description": "媒体消息仅发送媒体",
+        "type": "bool",
+        "default": false,
+        "hint": "如果消息包含媒体（图片、音频等），则不发送文本内容（包含标题和 From 头部）"
+    },
     "api_id": {
         "description": "App API ID",
         "type": "int",
@@ -43,49 +49,49 @@
     },
     "source_channels": {
         "description": "源频道配置列表",
-        "type": "list",
-        "item_type": "object",
-        "items": {
-            "channel_username": {
-                "type": "string",
-                "description": "频道用户名 (不带@)"
-            },
-            "start_time": {
-                "type": "string",
-                "description": "起始日期 (YYYY-MM-DD)",
-                "hint": "留空则仅转发新消息，填具体日期则补发旧消息"
-            },
-            "check_interval": {
-                "type": "int",
-                "description": "检测间隔 (秒)",
-                "default": 60,
-                "hint": "该频道专用的检测频率"
-            },
-            "msg_limit": {
-                "type": "int",
-                "description": "单次上限",
-                "default": 10,
-                "hint": "每次检测最多处理几条消息，建议设为 5~20"
-            },
-            "config_preset": {
-                "type": "string",
-                "description": "预设配置 (覆盖上方设置)",
-                "options": [
-                    "",
-                    "2025-12-01|60|3"
-                ],
-                "default": "",
-                "hint": "选择预设配置快捷填入 (格式: 日期|间隔|数量)，选中后将忽略上方的日期、间隔和数量设置"
+        "type": "template_list",
+        "templates": {
+            "default": {
+                "name": "频道配置",
+                "hint": "配置 Telegram 频道的抓取参数",
+                "items": {
+                    "channel_username": {
+                        "type": "string",
+                        "description": "频道用户名 (不带@)"
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "起始日期 (YYYY-MM-DD)",
+                        "hint": "留空则仅转发新消息，填具体日期则补发旧消息"
+                    },
+                    "check_interval": {
+                        "type": "int",
+                        "description": "检测间隔 (秒)",
+                        "default": 60,
+                        "hint": "该频道专用的检测频率"
+                    },
+                    "msg_limit": {
+                        "type": "int",
+                        "description": "单次上限",
+                        "default": 10,
+                        "hint": "每次检测最多处理几条消息，建议设为 5~20"
+                    },
+                    "config_preset": {
+                        "type": "string",
+                        "description": "预设配置 (覆盖上方设置)",
+                        "options": [
+                            "",
+                            "2025-12-01|60|3"
+                        ],
+                        "default": "",
+                        "hint": "选择预设配置快捷填入 (格式: 日期|间隔|数量)，选中后将忽略上方的日期、间隔和数量设置"
+                    }
+                }
             }
-        },
-        "block_default": {
-            "channel_username": "heyTchuang",
-            "start_time": "",
-            "check_interval": 60,
-            "msg_limit": 10
         },
         "default": [
             {
+                "__template_key": "default",
                 "channel_username": "heyTchuang",
                 "start_time": "",
                 "check_interval": 60,
@@ -140,8 +146,8 @@
     "napcat_api_url": {
         "description": "NapCat API 地址",
         "type": "string",
-        "hint": "NapCat 的 HTTP API 地址",
-        "default": "http://127.0.0.1:3000/send_group_msg"
+        "hint": "NapCat 的 HTTP API 地址。若设为 localhost，则使用 AstrBot 内部接口发送（推荐）。",
+        "default": "localhost"
     },
     "filter_keywords": {
         "type": "list",

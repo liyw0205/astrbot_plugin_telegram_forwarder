@@ -17,11 +17,30 @@ class PluginCommands:
             return
 
         channels = self.config.get("source_channels", [])
-        if channel in channels:
+        
+        # 检查是否已存在 (支持字典和字符串混合，以防万一)
+        exists = False
+        for c in channels:
+            if isinstance(c, dict) and c.get("channel_username") == channel:
+                exists = True
+                break
+            elif isinstance(c, str) and c == channel:
+                exists = True
+                break
+        
+        if exists:
             yield event.plain_result(f"⚠️ 频道 {channel} 已经在监控列表中。")
             return
 
-        channels.append(channel)
+        # 使用 template_list 格式添加
+        new_item = {
+            "__template_key": "default",
+            "channel_username": channel,
+            "start_time": "",
+            "check_interval": 60,
+            "msg_limit": 10
+        }
+        channels.append(new_item)
         self.config["source_channels"] = channels
         self.config.save_config()  # 保存配置
         yield event.plain_result(f"✅ 已添加频道 {channel} 到监控列表。")
@@ -33,11 +52,21 @@ class PluginCommands:
             return
 
         channels = self.config.get("source_channels", [])
-        if channel not in channels:
+        
+        target_index = -1
+        for i, c in enumerate(channels):
+            if isinstance(c, dict) and c.get("channel_username") == channel:
+                target_index = i
+                break
+            elif isinstance(c, str) and c == channel:
+                target_index = i
+                break
+
+        if target_index == -1:
             yield event.plain_result(f"⚠️ 频道 {channel} 不在监控列表中。")
             return
 
-        channels.remove(channel)
+        channels.pop(target_index)
         self.config["source_channels"] = channels
         self.config.save_config()
         yield event.plain_result(f"✅ 已移除频道 {channel}。")
@@ -49,7 +78,17 @@ class PluginCommands:
             yield event.plain_result("📭 当前没有监控任何频道。")
             return
 
-        msg = "📺当前监控的频道列表:\n" + "\n".join([f"- {c}" for c in channels])
+        display_list = []
+        for c in channels:
+            if isinstance(c, dict):
+                name = c.get("channel_username", "Unknown")
+                s_time = c.get("start_time", "Realtime")
+                if not s_time: s_time = "Realtime"
+                display_list.append(f"- {name} ({s_time})")
+            else:
+                display_list.append(f"- {c}")
+
+        msg = "📺当前监控的频道列表:\n" + "\n".join(display_list)
         yield event.plain_result(msg)
 
     async def force_check(self, event: AstrMessageEvent):
