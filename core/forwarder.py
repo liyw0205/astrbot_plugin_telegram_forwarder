@@ -109,7 +109,7 @@ class Forwarder:
             try:
                 channel_name = ""
                 start_date = None
-                default_interval = 0 # Default interval if not specified
+                default_interval = 0  # Default interval if not specified
                 interval = default_interval
                 msg_limit = 20  # 默认一次处理20条
 
@@ -118,15 +118,21 @@ class Forwarder:
                     # New config format
                     channel_name = cfg.get("channel_username", "")
                     if not channel_name:
-                        logger.warning(f"Skipping channel config with missing 'channel_username': {cfg}")
+                        logger.warning(
+                            f"Skipping channel config with missing 'channel_username': {cfg}"
+                        )
                         return []
 
                     s_time = cfg.get("start_time", "")
                     if s_time:
                         try:
-                            start_date = datetime.strptime(s_time, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                            start_date = datetime.strptime(s_time, "%Y-%m-%d").replace(
+                                tzinfo=timezone.utc
+                            )
                         except ValueError:
-                            logger.error(f"Invalid date format for {channel_name}: {s_time}")
+                            logger.error(
+                                f"Invalid date format for {channel_name}: {s_time}"
+                            )
 
                     interval = cfg.get("check_interval", default_interval)
                     msg_limit = cfg.get("msg_limit", 20)
@@ -139,9 +145,13 @@ class Forwarder:
                             p_parts = [p.strip() for p in preset.split("|")]
                             if len(p_parts) >= 1 and p_parts[0]:
                                 try:
-                                    start_date = datetime.strptime(p_parts[0], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                    start_date = datetime.strptime(
+                                        p_parts[0], "%Y-%m-%d"
+                                    ).replace(tzinfo=timezone.utc)
                                 except ValueError:
-                                    logger.warning(f"Invalid date in preset {preset} for {channel_name}")
+                                    logger.warning(
+                                        f"Invalid date in preset {preset} for {channel_name}"
+                                    )
 
                             if len(p_parts) >= 2 and p_parts[1].isdigit():
                                 interval = int(p_parts[1])
@@ -149,9 +159,13 @@ class Forwarder:
                             if len(p_parts) >= 3 and p_parts[2].isdigit():
                                 msg_limit = int(p_parts[2])
 
-                            logger.info(f"Applied preset {preset} for {channel_name}: date={start_date}, int={interval}, limit={msg_limit}")
+                            logger.info(
+                                f"Applied preset {preset} for {channel_name}: date={start_date}, int={interval}, limit={msg_limit}"
+                            )
                         except Exception as e:
-                            logger.error(f"Error applying preset {preset} for {channel_name}: {e}")
+                            logger.error(
+                                f"Error applying preset {preset} for {channel_name}: {e}"
+                            )
 
                 elif isinstance(cfg, str):
                     # Legacy string format: name|date|interval|limit
@@ -171,7 +185,9 @@ class Forwarder:
                         # 尝试解析为日期
                         if "-" in part and not start_date:
                             try:
-                                start_date = datetime.strptime(part, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                start_date = datetime.strptime(
+                                    part, "%Y-%m-%d"
+                                ).replace(tzinfo=timezone.utc)
                                 continue
                             except:
                                 pass
@@ -186,12 +202,16 @@ class Forwarder:
                     if len(ints_found) >= 2:
                         msg_limit = ints_found[1]
                 else:
-                    logger.warning(f"Skipping unknown channel config type: {type(cfg)} - {cfg}")
+                    logger.warning(
+                        f"Skipping unknown channel config type: {type(cfg)} - {cfg}"
+                    )
                     return []  # Unknown type
 
                 # Ensure channel_name is set
                 if not channel_name:
-                    logger.warning(f"Channel name could not be determined for config: {cfg}")
+                    logger.warning(
+                        f"Channel name could not be determined for config: {cfg}"
+                    )
                     return []
 
                 # 检查间隔
@@ -199,7 +219,7 @@ class Forwarder:
                 last_check = self._channel_last_check.get(channel_name, 0)
                 # 使用该频道配置的间隔判断
                 if now - last_check < interval:
-                    return [] # 还没到时间
+                    return []  # 还没到时间
 
                 # 获取该频道的锁
                 lock = self._get_channel_lock(channel_name)
@@ -211,7 +231,9 @@ class Forwarder:
                 async with lock:
                     self._channel_last_check[channel_name] = now
                     # Fetch阶段：只获取消息，不发送
-                    messages = await self._fetch_channel_messages(channel_name, start_date, msg_limit)
+                    messages = await self._fetch_channel_messages(
+                        channel_name, start_date, msg_limit
+                    )
                     return [(channel_name, msg) for msg in messages]
 
             except asyncio.CancelledError:
@@ -232,7 +254,7 @@ class Forwarder:
                 # 使用 gather 并设置超时
                 all_channel_messages = await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=FETCH_TIMEOUT
+                    timeout=FETCH_TIMEOUT,
                 )
 
                 # 合并所有频道的消息
@@ -250,16 +272,20 @@ class Forwarder:
                     # 按 message.date 排序（从旧到新）
                     global_message_queue.sort(key=lambda x: x[1].date)
 
-                    logger.info(f"[FGSS] Sorted {len(global_message_queue)} messages from {len(channels_config)} channels by timestamp")
+                    logger.info(
+                        f"[FGSS] Sorted {len(global_message_queue)} messages from {len(channels_config)} channels by timestamp"
+                    )
 
                     # ========== Phase 4: Send ==========
                     # 线性发送，严格按时间顺序
                     await self._send_sorted_messages(global_message_queue)
 
         except asyncio.TimeoutError:
-            logger.warning(f"[FGSS] Fetch phase timeout after {FETCH_TIMEOUT}s, sending partial results")
+            logger.warning(
+                f"[FGSS] Fetch phase timeout after {FETCH_TIMEOUT}s, sending partial results"
+            )
             # 发送已获取的消息
-            if 'global_message_queue' in locals() and global_message_queue:
+            if "global_message_queue" in locals() and global_message_queue:
                 global_message_queue.sort(key=lambda x: x[1].date)
                 await self._send_sorted_messages(global_message_queue)
         except asyncio.CancelledError:
@@ -319,7 +345,9 @@ class Forwarder:
             if new_messages:
                 max_id = max(m.id for m in new_messages)
                 self.storage.update_last_id(channel_name, max_id)
-                logger.info(f"[Fetch] {channel_name}: fetched {len(new_messages)} messages (max_id: {max_id})")
+                logger.info(
+                    f"[Fetch] {channel_name}: fetched {len(new_messages)} messages (max_id: {max_id})"
+                )
 
             return new_messages
 
@@ -375,9 +403,7 @@ class Forwarder:
 
                 # Regex 过滤
                 if not should_skip and filter_regex:
-                    if re.search(
-                        filter_regex, text_content, re.IGNORECASE | re.DOTALL
-                    ):
+                    if re.search(filter_regex, text_content, re.IGNORECASE | re.DOTALL):
                         logger.info(f"[Filter] {msg.id}: Regex match")
                         should_skip = True
 
@@ -390,35 +416,35 @@ class Forwarder:
             logger.info("[Send] All messages were filtered, nothing to send")
             return
 
-        logger.info(f"[Send] {len(filtered_messages)} messages after filtering (from {len(sorted_messages)} fetched)")
+        logger.info(
+            f"[Send] {len(filtered_messages)} messages after filtering (from {len(sorted_messages)} fetched)"
+        )
 
-        # ========== Phase 2: 相册分组 ==========
-        # 将消息按 grouped_id 分组，相册中的消息会作为整体发送
+        # ========== Phase 2: 相册分组 (修正版) ==========
+        # 使用字典按 (channel_name, grouped_id) 聚合，确保跨消息的相册也能正确合并
+        album_groups = {}
         batches = []
-        current_batch = []
 
         for channel_name, msg in filtered_messages:
             if msg.grouped_id:
-                # 消息属于某个相册
-                if current_batch and current_batch[0][1].grouped_id == msg.grouped_id:
-                    # 同一个相册，添加到当前批次
-                    current_batch.append((channel_name, msg))
-                else:
-                    # 新的相册，保存当前批次并开始新批次
-                    if current_batch:
-                        batches.append(current_batch)
-                    current_batch = [(channel_name, msg)]
+                key = (channel_name, msg.grouped_id)
+                if key not in album_groups:
+                    album_groups[key] = []
+                album_groups[key].append((channel_name, msg))
             else:
-                # 普通消息
-                if current_batch:
-                    batches.append(current_batch)
-                    current_batch = []
                 batches.append([(channel_name, msg)])
 
-        if current_batch:
-            batches.append(current_batch)
+        # 将聚合好的相册添加到批次中
+        for group in album_groups.values():
+            batches.append(group)
 
-        logger.info(f"[Send] Organized into {len(batches)} batches (albums grouped)")
+        # 重新按第一条消息的时间排序，确保发送顺序大致正确
+        if batches:
+            batches.sort(key=lambda batch: batch[0][1].date)
+
+        logger.info(
+            f"[Send] Organized into {len(batches)} batches (albums={len(album_groups)}, singles={len(batches) - len(album_groups)})"
+        )
 
         # ========== Phase 3: 线性发送 ==========
         # 使用全局锁确保原子性，按顺序发送每个批次
@@ -434,13 +460,21 @@ class Forwarder:
                         # 相册：所有消息的 grouped_id 相同
                         batch_type = "album"
                         grouped_id = messages[0].grouped_id
-                        logger.info(f"[Send] Batch {batch_idx + 1}/{len(batches)}: Album from {src_channel} (grouped_id={grouped_id}, {len(messages)} photos)")
+                        logger.info(
+                            f"[Send] Batch {batch_idx + 1}/{len(batches)}: Album from {src_channel} (grouped_id={grouped_id}, {len(messages)} photos)"
+                        )
                     else:
                         # 单条消息
                         batch_type = "single"
                         msg = messages[0]
-                        msg_preview = (msg.text[:30] + "...") if msg.text else f"[Media: {type(msg.media).__name__}]"
-                        logger.info(f"[Send] Batch {batch_idx + 1}/{len(batches)}: Single msg {msg.id} from {src_channel} ({msg_preview})")
+                        msg_preview = (
+                            (msg.text[:30] + "...")
+                            if msg.text
+                            else f"[Media: {type(msg.media).__name__}]"
+                        )
+                        logger.info(
+                            f"[Send] Batch {batch_idx + 1}/{len(batches)}: Single msg {msg.id} from {src_channel} ({msg_preview})"
+                        )
 
                     # 将批次转换为 Sender 期望的格式: List[List[Message]], src_channel
                     sender_batches = [messages]
@@ -468,11 +502,11 @@ class Forwarder:
         # 允许保留的文件列表
         # .session-journal, .session-shm, .session-wal 是 SQLite 的临时文件，必须保留以防止数据库损坏
         allowlist = [
-            "data.json", 
-            "user_session.session", 
+            "data.json",
+            "user_session.session",
             "user_session.session-journal",
             "user_session.session-shm",
-            "user_session.session-wal"
+            "user_session.session-wal",
         ]
         deleted_count = 0
 
