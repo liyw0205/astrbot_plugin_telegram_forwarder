@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
 from typing import Optional, List
 from telethon.tl.types import Message, PeerUser
@@ -13,7 +14,6 @@ from .senders.telegram import TelegramSender
 from .senders.qq import QQSender
 from .filters.message_filter import MessageFilter
 from .mergers import MessageMerger
-from .config import ChannelConfigParser
 
 
 class Forwarder:
@@ -200,51 +200,93 @@ class Forwarder:
             return
 
         channel_to_ids = {}
+        id_to_meta = {} # 建立 ID 到元数据的映射，方便后续根据 grouped_id 过滤
         for item in to_send_meta:
             c = item["channel"]
+            mid = item["id"]
             if c not in channel_to_ids: channel_to_ids[c] = []
-            channel_to_ids[c].append(item["id"])
+            channel_to_ids[c].append(mid)
+            id_to_meta[mid] = item
 
         messages_to_process = []
         filter_keywords = self.config.get("filter_keywords", [])
         filter_regex = self.config.get("filter_regex", "")
         filter_hashtags = self.config.get("filter_hashtags", [])
 
+        # 第一阶段：初步抓取并识别需要过滤的消息/相册
+        raw_fetched_messages = []
+        skipped_grouped_ids = set() # (channel, grouped_id)
+        individually_skipped_ids = set()
+
         for channel, ids in channel_to_ids.items():
             try:
                 msgs = await self.client.get_messages(channel, ids=ids)
                 for m in msgs:
                     if not m: continue
+                    raw_fetched_messages.append((channel, m))
                     
                     text_content = m.text or ""
+                    # 检查是否有按钮文字 (广告常用)
+                    button_text = ""
+                    if m.reply_markup and hasattr(m.reply_markup, 'rows'):
+                        btn_parts = []
+                        for row in m.reply_markup.rows:
+                            for btn in row.buttons:
+                                if hasattr(btn, 'text'): btn_parts.append(btn.text)
+                        button_text = " ".join(btn_parts)
+                    
+                    full_check_text = f"{text_content} {button_text}"
+
                     should_skip = False
+                    
+                    # 关键词/正则/Hashtag 过滤 (检查正文 + 按钮)
+                    check_text_lower = full_check_text.lower()
                     
                     if filter_hashtags:
                         for tag in filter_hashtags:
-                            if tag in text_content:
-                                logger.debug(f"[Filter] {m.id}: 命中 Hashtag '{tag}'")
+                            if tag.lower() in check_text_lower:
+                                logger.info(f"[Filter] 消息 {m.id} 命中 Hashtag '{tag}'")
                                 should_skip = True; break
                     
                     if not should_skip and filter_keywords:
                         for kw in filter_keywords:
-                            if kw in text_content:
-                                logger.debug(f"[Filter] {m.id}: 命中关键词 '{kw}'")
+                            if kw.lower() in check_text_lower:
+                                logger.info(f"[Filter] 消息 {m.id} 命中关键词 '{kw}'")
                                 should_skip = True; break
                     
                     if not should_skip and filter_regex:
-                        if re.search(filter_regex, text_content, re.IGNORECASE | re.DOTALL):
-                            logger.debug(f"[Filter] {m.id}: 命中正则匹配")
+                        if re.search(filter_regex, full_check_text, re.IGNORECASE | re.DOTALL):
+                            logger.info(f"[Filter] 消息 {m.id} 命中正则匹配")
                             should_skip = True
                     
-                    if not should_skip:
-                        messages_to_process.append((channel, m))
+                    if should_skip:
+                        meta = id_to_meta.get(m.id)
+                        if meta and meta.get("grouped_id"):
+                            skipped_grouped_ids.add((channel, meta["grouped_id"]))
+                        individually_skipped_ids.add(m.id)
             except Exception as e:
                 logger.error(f"[Send] 拉取消息失败 {channel}: {e}")
 
+        # 第二阶段：应用过滤（包括相册联动过滤）
+        for channel, m in raw_fetched_messages:
+            meta = id_to_meta.get(m.id)
+            is_in_skipped_album = False
+            if meta and meta.get("grouped_id"):
+                if (channel, meta["grouped_id"]) in skipped_grouped_ids:
+                    is_in_skipped_album = True
+            
+            if m.id in individually_skipped_ids or is_in_skipped_album:
+                if is_in_skipped_album and m.id not in individually_skipped_ids:
+                    logger.info(f"[Filter] 消息 {m.id} 因所属相册中其他消息命中过滤规则而被同步跳过。")
+                continue
+            
+            messages_to_process.append((channel, m))
+
         if not messages_to_process:
-            sent_ids = [item["id"] for item in to_send_meta]
-            remaining_pending = [item for item in valid_pending if item["id"] not in sent_ids]
+            processed_ids = [item["id"] for item in to_send_meta]
+            remaining_pending = [item for item in valid_pending if item["id"] not in processed_ids]
             self._update_storage_queues(remaining_pending)
+            logger.info(f"[Send] 本批次所有消息 ({len(processed_ids)} 条) 均被过滤或获取失败，已从队列移除。")
             return
 
         final_batches = []
@@ -270,18 +312,28 @@ class Forwarder:
                     final_batches.append(([msg_map[mid][1]], channel))
                     processed_ids_in_send.add(mid)
 
+        actual_sent_count = 0
         try:
             if final_batches:
                 await self._send_sorted_messages_in_batches(final_batches)
+                for msgs, _ in final_batches:
+                    actual_sent_count += len(msgs)
         except Exception as e:
             logger.error(f"[Send] 转发过程出现错误: {e}")
         finally:
-            sent_ids = [item["id"] for item in to_send_meta]
-            remaining_pending = [item for item in valid_pending if item["id"] not in sent_ids]
+            processed_ids = [item["id"] for item in to_send_meta]
+            remaining_pending = [item for item in valid_pending if item["id"] not in processed_ids]
             self._update_storage_queues(remaining_pending)
             
-            if sent_ids:
-                logger.info(f"[Send] 批次处理完成。已发送 {len(sent_ids)} 条消息，队列剩余: {len(remaining_pending)} 条。")
+            if processed_ids:
+                skipped_count = len(processed_ids) - actual_sent_count
+                msg = f"[Send] 批次处理完成。本批次共处理 {len(processed_ids)} 条："
+                if actual_sent_count > 0:
+                    msg += f" 成功发送 {actual_sent_count} 条；"
+                if skipped_count > 0:
+                    msg += f" 过滤/跳过 {skipped_count} 条；"
+                msg += f"队列剩余: {len(remaining_pending)} 条。"
+                logger.info(msg)
 
     async def _send_sorted_messages_in_batches(self, batches_with_channel: List[tuple]):
         """发送排好序的消息批次"""
@@ -297,35 +349,27 @@ class Forwarder:
         """
         将打平的待发送列表重新按频道分组并更新到 storage
         """
-        # 1. 首先清空所有频道的队列（或者只处理涉及到的频道）
-        # 这里为了安全，我们先按频道分组
-        channel_queues = {}
+        # 1. 首先确定哪些频道需要被清空或更新（涉及到的频道）
+        all_channels = list(self.storage.persistence.get("channels", {}).keys())
+        
+        # 2. 按频道分组传入的消息
+        channel_queues = {c: [] for c in all_channels}
         for item in flat_pending_list:
             c = item["channel"]
             if c not in channel_queues:
                 channel_queues[c] = []
-            
-            # 构造原始存储格式
             channel_queues[c].append({
                 "id": item["id"],
                 "time": item["time"],
                 "grouped_id": item.get("grouped_id")
             })
+
+        # 3. 逐个更新
+        for channel_name, queue in channel_queues.items():
+            self.storage.update_pending_queue(channel_name, queue)
         
-        # 2. 获取 storage 中当前已知的所有频道
-        all_channels = self.config.get("source_channels", [])
-        channel_names = []
-        for cfg in all_channels:
-            if isinstance(cfg, dict):
-                channel_names.append(cfg.get("channel_username"))
-            elif isinstance(cfg, str):
-                channel_names.append(cfg.split("|")[0].strip())
-        
-        # 3. 更新 storage
-        for cname in channel_names:
-            if not cname: continue
-            new_queue = channel_queues.get(cname, [])
-            self.storage.update_pending_queue(cname, new_queue)
+        # 4. 强制执行一次全局保存，确保 JSON 文件更新
+        self.storage.save()
 
     async def _fetch_channel_messages(
         self, channel_name: str, start_date: Optional[datetime], msg_limit: int = 20
