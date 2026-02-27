@@ -192,31 +192,16 @@ class Forwarder:
         else:
             max_file_size = g_max or c_max
             
-        # 3.3 关键词与正则
-        ignore_global_text_filters = channel_cfg.get("ignore_global_filters", False)
-        
-        g_filter_keywords = global_cfg.get("filter_keywords", [])
-        c_filter_keywords = channel_cfg.get("filter_keywords", [])
-        
-        if ignore_global_text_filters:
-            filter_keywords = c_filter_keywords
-        else:
-            filter_keywords = list(set(g_filter_keywords + c_filter_keywords))
-        
+        # 3.3 关键词与正则 (并集过滤：命中任何一个都过滤)
+        filter_keywords = list(set(global_cfg.get("filter_keywords", []) + channel_cfg.get("filter_keywords", [])))
         filter_patterns = []
-        g_regex = global_cfg.get("filter_regex", "").strip()
-        c_regex = channel_cfg.get("filter_regex", "").strip()
-        
-        if not ignore_global_text_filters and g_regex:
-            filter_patterns.append(g_regex)
-        if c_regex:
-            filter_patterns.append(c_regex)
-        
+        if global_cfg.get("filter_regex"):
+            filter_patterns.append(global_cfg["filter_regex"])
+        if channel_cfg.get("filter_regex"):
+            filter_patterns.append(channel_cfg["filter_regex"])
+    
         # 3.4 监听关键词与监听正则 (并集监听：命中任何一个都触发立即转发)
-        monitor_keywords = list(set(
-            global_cfg.get("monitor_keywords", []) + 
-            channel_cfg.get("monitor_keywords", [])
-        ))
+        monitor_keywords = list(set(global_cfg.get("monitor_keywords", []) + channel_cfg.get("monitor_keywords", [])))
         monitor_patterns = []
         if global_cfg.get("monitor_regex"):
             monitor_patterns.append(global_cfg["monitor_regex"])
@@ -226,16 +211,15 @@ class Forwarder:
         # 3.5 发送间隔与检测间隔
         check_interval = channel_cfg.get("check_interval") or global_cfg.get("check_interval", 60)
         send_interval = global_cfg.get("send_interval", 60)
-        
-        # 3.6 查重开关（目前只支持全局控制）
+    
+        # 3.6 查重开关
         enable_deduplication = global_cfg.get("enable_deduplication", True)
-        
+    
         # 3.7 优先级校验 (小于 1 视作 0)
         priority = channel_cfg.get("priority", 0)
         if priority < 1:
             priority = 0
-        
-        # 3.8 媒体文本排除 & 剧透过滤
+    
         exclude_text_on_media = (
             channel_cfg.get("exclude_text_on_media", "继承全局") == "开启"
             or (
@@ -243,7 +227,6 @@ class Forwarder:
                 and global_cfg.get("exclude_text_on_media", False)
             )
         )
-        
         filter_spoiler_messages = (
             channel_cfg.get("filter_spoiler_messages", "继承全局") == "开启"
             or (
@@ -251,13 +234,14 @@ class Forwarder:
                 and global_cfg.get("filter_spoiler_messages", False)
             )
         )
-        
+    
+        # ───────────── 目标 QQ 群 ─────────────
         channel_specific_groups = channel_cfg.get("target_qq_groups", [])
         if channel_specific_groups:  # 非空列表 → 使用频道专属配置
             effective_qq_groups = channel_specific_groups
         else:
             effective_qq_groups = self.config.get("target_qq_group", [])  # 回退到全局
-        
+    
         return {
             "forward_types": forward_types,
             "max_file_size": max_file_size,
@@ -752,39 +736,42 @@ class Forwarder:
 
 
     async def _send_sorted_messages_in_batches(self, batches_with_channel: List[tuple]):
-        """发送排好序的消息批次"""
         async with self._global_send_lock:
             from collections import defaultdict
-            qq_send_groups = defaultdict(list)  # (src_channel) → List[List[Message]]
+            qq_send_groups = defaultdict(list)
     
             for msgs, src_channel in batches_with_channel:
                 qq_send_groups[src_channel].append(msgs)
     
-            # 逐个源频道处理
             for src_channel, msg_groups in qq_send_groups.items():
                 display_name = await self._get_display_name(src_channel)
                 effective_cfg = self._get_effective_config(src_channel)
     
-                # ─── 获取最终的目标 QQ 群列表 ───
-                target_groups = effective_cfg["effective_target_qq_groups"]
+                # ─── Telegram 转发───
+                tg_target = self.config.get("target_channel", "").strip()
+                if tg_target:
+                    try:
+                        await self.tg_sender.send(
+                            batches=msg_groups,
+                            src_channel=src_channel,
+                            effective_cfg=effective_cfg
+                        )
+                        logger.debug(f"[TG] 已转发 {len(msg_groups)} 批次 到 {tg_target}")
+                    except Exception as e:
+                        logger.error(f"[TG] 转发失败 {src_channel} → {tg_target} : {e}")
     
+                # ─── QQ 转发 ───
+                target_groups = effective_cfg["effective_target_qq_groups"]
                 if not target_groups:
-                    logger.warning(
-                        f"[Send] 频道 {src_channel} 没有任何目标 QQ 群（频道专属和全局均为空），跳过发送"
-                    )
+                    logger.warning(f"[QQ] 频道 {src_channel} 无任何目标 QQ 群，跳过")
                     continue
     
-                logger.debug(
-                    f"[Send] 源频道 {src_channel} → 将发送到 {len(target_groups)} 个 QQ 群"
-                )
-    
-                # 传递最终的目标群列表给 QQSender
                 await self.qq_sender.send(
                     batches=msg_groups,
                     src_channel=src_channel,
                     display_name=display_name,
                     exclude_text_on_media=effective_cfg["exclude_text_on_media"],
-                    target_qq_groups=target_groups   # 关键：传进去
+                    target_qq_groups=target_groups
                 )
                 
     

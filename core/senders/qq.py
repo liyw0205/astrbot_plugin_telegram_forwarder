@@ -58,7 +58,7 @@ class QQSender:
         src_channel: str,
         display_name: str = None,
         exclude_text_on_media: bool = False,
-        target_qq_groups: List[int] = None,   # ← 新增这个参数
+        target_qq_groups: List[int] = None,
     ):
         qq_groups = target_qq_groups if target_qq_groups is not None else self.config.get("target_qq_group", [])
         
@@ -238,7 +238,6 @@ class QQSender:
     
         else:
             # ───────────── HTTP (NapCat) 模式 ─────────────
-            # 此处保持原有逻辑不变（或按需实现大合并，但通常 localhost 模式更稳定）
             # 如果也想在这里支持大合并，可参考上面逻辑改写，但复杂得多，建议优先使用 localhost 模式
             async with httpx.AsyncClient() as http:
                 header_name = display_name or src_channel
