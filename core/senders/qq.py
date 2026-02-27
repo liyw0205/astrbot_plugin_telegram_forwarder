@@ -9,7 +9,6 @@ from astrbot.api.message_components import Plain, Image, Record, Video, Node, No
 
 from ...common.text_tools import clean_telegram_text
 from ..downloader import MediaDownloader
-from ..uploader import FileUploader
 
 
 class QQSender:
@@ -18,12 +17,11 @@ class QQSender:
     """
 
     def __init__(
-        self, context: star.Context, config: AstrBotConfig, downloader: MediaDownloader, uploader: FileUploader
+        self, context: star.Context, config: AstrBotConfig, downloader: MediaDownloader
     ):
         self.context = context
         self.config = config
         self.downloader = downloader
-        self.uploader = uploader
         self._group_locks = {}  # 群锁，防止并发发送
         self.platform_id = None # 动态捕获的平台 ID
         self.bot = None         # 动态捕获的 bot 实例
@@ -276,115 +274,6 @@ class QQSender:
                                         logger.error(f"[QQSender] HTTP 发送到群 {gid} 失败: {e}")
                             finally:
                                 self._cleanup_files(all_local_files)
-
-    async def _process_one_file(self, fpath: str) -> List[dict]:
-        """
-        将本地文件转换为 NapCat 消息节点列表
-        """
-        ext = os.path.splitext(fpath)[1].lower()
-        hosting_url = self.config.get("file_hosting_url")
-
-        # 1. 处理图片：50MB 以下尝试 Base64 发送
-        if ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]:
-            if os.path.getsize(fpath) < 50 * 1024 * 1024:
-                try:
-                    import base64
-                    with open(fpath, "rb") as image_file:
-                        encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-                    return [
-                        {
-                            "type": "image",
-                            "data": {"file": f"base64://{encoded_string}"},
-                        }
-                    ]
-                except Exception as e:
-                    logger.debug(f"[QQSender] 图片转 Base64 失败: {e}")
-            else:
-                logger.debug(f"[QQSender] 图片过大，尝试其他方式发送")
-
-        # 2. 上传到文件托管服务
-        if hosting_url:
-            try:
-                link = await self.uploader.upload(fpath, hosting_url)
-
-                if link:
-                    # 音频文件发送语音节点
-                    if ext in [".mp3", ".ogg", ".wav", ".m4a", ".flac", ".amr"]:
-                        return [
-                            {
-                                "type": "text",
-                                "data": {
-                                    "text": f"\n[音频: {os.path.basename(fpath)}]\n🔗 链接: {link}\n"
-                                },
-                            },
-                            {"type": "record", "data": {"file": link}},
-                        ]
-
-                    # 其他媒体文件返回链接
-                    return [
-                        {"type": "text", "data": {"text": f"\n[媒体链接: {link}]"}}
-                    ]
-                else:
-                    # 如果没有 link 且不是富媒体，尝试直接发送本地文件
-                    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".mov", ".avi", ".mkv", ".flv"]:
-                        return [
-                            {
-                                "type": "file",
-                                "data": {
-                                    "file": f"file:///{os.path.abspath(fpath)}",
-                                    "name": os.path.basename(fpath)
-                                }
-                            }
-                        ]
-                    return [
-                        {
-                            "type": "text",
-                            "data": {
-                                "text": f"\n[媒体文件: {os.path.basename(fpath)}] (上传失败)"
-                            },
-                        }
-                    ]
-            except Exception as e:
-                logger.error(f"[QQSender] 上传失败: {e}")
-                # 上传失败回退到直接发送本地文件
-                if ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".mov", ".avi", ".mkv", ".flv"]:
-                    return [
-                        {
-                            "type": "file",
-                            "data": {
-                                "file": f"file:///{os.path.abspath(fpath)}",
-                                "name": os.path.basename(fpath)
-                            }
-                        }
-                    ]
-                return [
-                    {
-                        "type": "text",
-                        "data": {
-                            "text": f"\n[媒体文件: {os.path.basename(fpath)}] (上传异常)"
-                        },
-                    }
-                ]
-
-        # 3. 回退方案：如果没有配置托管，对于普通文件尝试直接发送
-        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".mov", ".avi", ".mkv", ".flv"]:
-            return [
-                {
-                    "type": "file",
-                    "data": {
-                        "file": f"file:///{os.path.abspath(fpath)}",
-                        "name": os.path.basename(fpath)
-                    }
-                }
-            ]
-        
-        fname = os.path.basename(fpath)
-        return [
-            {
-                "type": "text",
-                "data": {"text": f"\n[媒体文件: {fname}] (文件过大或未配置托管)"},
-            }
-        ]
 
     def _cleanup_files(self, files: List[str]):
         """清理临时下载的文件"""

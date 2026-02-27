@@ -22,13 +22,12 @@ class TelegramSender:
             effective_cfg: 合并后的配置项
         """
         tg_target = self.config.get("target_channel")
-        bot_token = self.config.get("bot_token")
 
         if not batches:
             return
 
-        # 只要配置了目标频道和 bot_token，就认为启用 TG 转发
-        if tg_target and bot_token:
+        # 只要配置了目标频道，就启用 TG 转发
+        if tg_target:
             try:
                 # ========== 解析目标频道 ==========
                 target = tg_target

@@ -2,7 +2,7 @@
     "napcat_api_url": {
         "description": "NapCat API 地址",
         "type": "string",
-        "hint": "NapCat 的 HTTP API 地址。若设为 localhost，则使用框架内部接口发送",
+        "hint": "NapCat 的 HTTP API 地址。通常保持默认 localhost，使用框架内部接口发送",
         "default": "localhost"
     },
     "target_qq_group": {
@@ -11,12 +11,6 @@
         "item_type": "int",
         "hint": "转发到 QQ 群列表",
         "default": []
-    },
-    "bot_token": {
-        "description": "TG Bot Token",
-        "type": "string",
-        "hint": "转发到 Telegram 目标频道时需要，从 @BotFather 获取",
-        "default": ""
     },
     "target_channel": {
         "description": "TG 目标频道 ID",
@@ -50,6 +44,12 @@
             "session"
         ],
         "hint": "上传 .session 文件以直接登录，避免验证码或人机验证问题，你可以使用本地脚本生成此文件后上传"
+    },
+    "proxy": {
+        "description": "代理地址",
+        "type": "string",
+        "hint": "部分网络环境访问 Telegram 需要代理，例如 http://127.0.0.1:7890",
+        "default": ""
     },
     "source_channels": {
         "description": "源频道配置列表",
@@ -118,6 +118,26 @@
                         "description": "正则过滤",
                         "default": "",
                         "hint": "Python 正则表达式过滤"
+                    },
+                    "filter_spoiler_messages": {
+                        "description": "过滤遮罩/剧透消息",
+                        "type": "string",
+                        "options": ["继承全局", "开启", "关闭"],
+                        "default": "继承全局",
+                        "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
+                    },
+                    "monitor_keywords": {
+                        "type": "list",
+                        "item_type": "string",
+                        "description": "监听关键词",
+                        "default": [],
+                        "hint": "命中后会立即触发转发"
+                    },
+                    "monitor_regex": {
+                        "type": "string",
+                        "description": "监听正则",
+                        "default": "",
+                        "hint": "命中后会立即触发转发"
                     }
                 }
             }
@@ -131,8 +151,11 @@
                 "msg_limit": 10,
                 "priority": 0,
                 "exclude_text_on_media": "继承全局",
+                "filter_spoiler_messages": "继承全局",
                 "forward_types": ["文字", "图片", "视频", "音频", "文件"],
-                "max_file_size": 0
+                "max_file_size": 0,
+                "monitor_keywords": [],
+                "monitor_regex": ""
             }
         ],
         "hint": "添加并配置需要转发的 Telegram 频道",
@@ -160,6 +183,12 @@
                 "type": "bool",
                 "default": false,
                 "hint": "如果消息包含媒体（图片、音频、视频、文件等），则不发送文本说明内容（包含标题和 From 头部）"
+            },
+            "filter_spoiler_messages": {
+                "description": "过滤遮罩/剧透消息",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
             },
             "forward_types": {
                 "description": "转发消息类型",
@@ -221,24 +250,25 @@
                 "description": "正则过滤",
                 "default": "",
                 "hint": "Python 正则表达式过滤。留空则不启用。"
+            },
+            "monitor_keywords": {
+                "type": "list",
+                "item_type": "string",
+                "description": "监听关键词",
+                "default": [],
+                "hint": "命中后会立即触发转发"
+            },
+            "monitor_regex": {
+                "type": "string",
+                "description": "监听正则",
+                "default": "",
+                "hint": "命中后会立即触发转发"
             }
         }
     },
-    "proxy": {
-        "description": "代理地址",
-        "type": "string",
-        "hint": "访问 Telegram 需要代理，例如 http://127.0.0.1:7890",
-        "default": ""
-    },
-    "file_hosting_url": {
-        "description": "图床上传接口",
-        "type": "string",
-        "hint": "用于上传视频/大文件的图床接口 (如 Cloudflare Pages)",
-        "default": ""
-    },
     "merge_rules": {
         "type": "template_list",
-        "description": "消息合并规则",
+        "description": "消息合并规则（暂未实现）",
         "hint": "针对不规范频道的多消息组合进行智能合并（如预览图+原图）",
         "templates": {
             "default": {

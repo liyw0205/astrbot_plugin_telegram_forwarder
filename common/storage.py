@@ -31,11 +31,20 @@ class Storage:
 
     def save(self):
         """保存当前数据到文件"""
+        tmp_file = f"{self.data_file}.tmp"
         try:
-            with open(self.data_file, "w", encoding="utf-8") as f:
-                json.dump(self.persistence, f, indent=2)
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(self.persistence, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, self.data_file)
         except IOError as e:
             logger.error(f"[Storage] 保存数据失败: {e}")
+            try:
+                if os.path.exists(tmp_file):
+                    os.remove(tmp_file)
+            except Exception:
+                pass
 
     def get_channel_data(self, channel_name: str) -> dict:
         """获取频道的持久化数据"""
@@ -69,20 +78,61 @@ class Storage:
                 return name
         return None
 
-    def add_to_pending_queue(self, channel_name: str, msg_id: int, timestamp: float, grouped_id: int = None, is_cold_start: bool = False):
+    def add_to_pending_queue(
+        self,
+        channel_name: str,
+        msg_id: int,
+        timestamp: float,
+        grouped_id: int = None,
+        is_cold_start: bool = False,
+        is_monitored: bool = False,
+    ):
         """添加单条消息到待发送队列"""
-        data = self.get_channel_data(channel_name)
-        if not any(m["id"] == msg_id for m in data["pending_queue"]):
-            data["pending_queue"].append({
-                "id": msg_id, 
-                "time": timestamp,
-                "grouped_id": grouped_id,
-                "is_cold_start": is_cold_start
-            })
-            self.save()
-            logger.debug(f"[Storage] 消息 {msg_id} (组: {grouped_id}) 已保存到 {channel_name} 待发送队列。当前队列大小: {len(data['pending_queue'])}")
-        else:
+        added = self.add_batch_to_pending_queue(
+            channel_name,
+            [
+                {
+                    "id": msg_id,
+                    "time": timestamp,
+                    "grouped_id": grouped_id,
+                    "is_cold_start": is_cold_start,
+                    "is_monitored": is_monitored,
+                }
+            ],
+        )
+        if not added:
             logger.debug(f"[Storage] 消息 {msg_id} 已在队列中，跳过。")
+
+    def add_batch_to_pending_queue(self, channel_name: str, messages: list) -> int:
+        """批量添加消息到待发送队列，减少高频落盘开销"""
+        data = self.get_channel_data(channel_name)
+        existing_ids = {m["id"] for m in data["pending_queue"]}
+        added_count = 0
+
+        for msg in messages:
+            msg_id = msg["id"]
+            if msg_id in existing_ids:
+                continue
+
+            data["pending_queue"].append(
+                {
+                    "id": msg_id,
+                    "time": msg["time"],
+                    "grouped_id": msg.get("grouped_id"),
+                    "is_cold_start": msg.get("is_cold_start", False),
+                    "is_monitored": msg.get("is_monitored", False),
+                }
+            )
+            existing_ids.add(msg_id)
+            added_count += 1
+
+        if added_count > 0:
+            self.save()
+            logger.debug(
+                f"[Storage] 批量写入 {channel_name} 待发送队列: +{added_count} "
+                f"(当前队列大小: {len(data['pending_queue'])})"
+            )
+        return added_count
 
     def update_pending_queue(self, channel_name: str, queue: list):
         """更新频道的待发送队列"""
@@ -103,7 +153,8 @@ class Storage:
                     "id": msg["id"],
                     "time": msg["time"],
                     "grouped_id": msg.get("grouped_id"),
-                    "is_cold_start": msg.get("is_cold_start", False)
+                    "is_cold_start": msg.get("is_cold_start", False),
+                    "is_monitored": msg.get("is_monitored", False),
                 })
         return all_pending
 

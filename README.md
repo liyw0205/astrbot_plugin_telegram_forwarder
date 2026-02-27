@@ -20,11 +20,10 @@
 
 * **🌐 多平台同步**
   * 支持转发至 **QQ 群** (通过 NapCat/OneBot 11)。
-  * 支持转发至 **Telegram 频道** (通过 Bot API)。
+  * 支持转发至 **Telegram 频道** (通过 Telethon 会话转发)。
 * **📦 全媒体类型支持**
   * **图文消息**: 自动识别并保持格式同步。
-  * **音频/大文件**: 支持 **30MB+ 无损音频 (FLAC/WAV)**，转发至 QQ 时自动生成语音预览 + 下载链接。
-  * **分片上传**: 大文件自动分片上传至图床，突破 OneBot 文件大小限制。
+  * **音频/文件**: 支持常见媒体与文件类型搬运。
 * **🛠️ 高级控制逻辑**
   * **灵活过滤**: 内置关键词黑名单与正则表达式过滤引擎。
   * **冷启动支持**: 可指定历史日期开始搬运。在频道设置中指定 `start_time` (格式: YYYY-MM-DD) 即可。
@@ -60,10 +59,8 @@
 * **QQ 配置**:
   * `target_qq_group`: 接收消息的 QQ 群号列表。
   * `napcat_api_url`: NapCat API 地址。若设为 `localhost`，则使用 AstrBot 内部接口发送（推荐）。
-  * `file_hosting_url`: 用于上传视频/大文件的图床接口 (支持 Cloudflare Pages 等)。
 * **Telegram 配置**:
   * `target_channel`: 接收消息的目标频道 ID。
-  * `bot_token`: 转发机器人 Token，从 [@BotFather](https://t.me/BotFather) 获取。
 
 ### 4. 源频道配置
 您可以为每个频道进行精细化设置：
@@ -73,15 +70,21 @@
 * **priority**: 转发优先级。数值越大优先级越高。未设置或为 0 时优先级最低。高优先级频道的消息将优先于低优先级频道发送。
 * **forward_types**: 选择需要搬运的类型 (文字/图片/视频/音频/文件)。
 * **max_file_size**: 单个文件大小限制 (MB)，0 表示不限制。
+* **filter_spoiler_messages**: 是否过滤遮罩/剧透消息（支持继承全局配置）。
+* **monitor_keywords**: 监听关键词。命中后会立即触发转发。
+* **monitor_regex**: 监听正则。命中后会立即触发转发。
 
 ### 5. 全局转发配置
 * **use_channel_title**: 是否在消息头部显示频道名称。
 * **enable_deduplication**: 是否启用转发查重。开启后，如果频道 A 转发了频道 B 的消息，且频道 B 也在监控列表中，则频道 A 的这条转发消息将被自动跳过。
 * **exclude_text_on_media**: 开启后，包含媒体的消息将不再发送文本内容（包含 From 头部）。
+* **filter_spoiler_messages**: 过滤 Telegram 遮罩/剧透消息（文本剧透实体与媒体剧透标记）。
 * **batch_size_limit**: 每次转发执行时，单次处理的消息批次上限。
 * **send_interval**: 轮询待发送队列并执行转发任务的周期。
 * **retention_period**: 消息在队列中的最大保留时间，过期将自动丢弃。
 * **curfew_time**: 宵禁时间段 (格式：`11:11-14:12`)。在此时间段内，插件将停止抓取新消息和转发任务。支持跨天（如 `23:00-07:00`）。留空则禁用。
+* **monitor_keywords**: 全局监听关键词。与频道监听关键词做并集，命中后立即触发转发。
+* **monitor_regex**: 全局监听正则。与频道监听正则共同生效，命中后立即触发转发。
 
 ---
 
@@ -90,7 +93,7 @@
 * **Q: 音频链接不显示？**
   * **A**: 插件会将外链和语音分两条消息发送，请检查消息是否被群管屏蔽。
 * **Q: 大文件发送失败？**
-  * **A**: 请确保 `file_hosting_url` 配置正确，且图床支持分片上传（当前适配 Sanyue 图床 API）。
+  * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。
 * **Q: 数据存放在哪里？**
   * **A**: 所有登录会话与配置均持久化在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失。
 

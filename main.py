@@ -58,12 +58,10 @@ class Main(star.Star):
                     try:
                         shutil.copy2(full_uploaded_path, target_session_path)
                         logger.debug(f"[Main] 已从上传配置同步会话文件: {target_session_path}")
-                        
-                        from .core.client import get_client_cache
-                        cache = get_client_cache()
-                        if target_session_path in cache:
-                            logger.debug("[Main] 会话文件已更新，清理缓存以强制重新连接。")
-                            del cache[target_session_path]
+                        # 客户端缓存键使用 user_session（无 .session 后缀）
+                        session_key_path = os.path.join(self.plugin_data_dir, "user_session")
+                        TelegramClientWrapper.clear_cache(session_key_path)
+                        logger.debug("[Main] 会话文件已更新，已清理客户端缓存。")
                             
                     except Exception as e:
                         logger.error(f"[Main] 同步会话文件失败 (可能被占用): {e}")
