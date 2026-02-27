@@ -65,16 +65,19 @@
 ### 4. 源频道配置
 您可以为每个频道进行精细化设置：
 * **channel_username**: 频道用户名 (不带 @)。
+* **target_qq_groups**: 填写则覆盖全局 QQ 目标群号 留空使用全局配置。
 * **start_time**: 起始日期 (YYYY-MM-DD)。留空则仅转发新消息。
 * **check_interval**: 专属检测间隔。为 0 时使用全局配置。
 * **priority**: 转发优先级。数值越大优先级越高。未设置或为 0 时优先级最低。高优先级频道的消息将优先于低优先级频道发送。
 * **forward_types**: 选择需要搬运的类型 (文字/图片/视频/音频/文件)。
 * **max_file_size**: 单个文件大小限制 (MB)，0 表示不限制。
+* **ignore_global_filters**: 开启后，该频道将**忽略全局**的 filter_keywords 和 filter_regex（但仍执行本频道自己的过滤规则）。常用于白名单式频道或重要通知频道。
 * **filter_spoiler_messages**: 是否过滤遮罩/剧透消息（支持继承全局配置）。
 * **monitor_keywords**: 监听关键词。命中后会立即触发转发。
 * **monitor_regex**: 监听正则。命中后会立即触发转发。
 
 ### 5. 全局转发配置
+* **qq_merge_threshold**: QQ 大合并：本次要发的消息数 >= 此值时，全部打包成一条合并转发消息。设为 ≤1 则永不触发大合并。推荐 5~10
 * **use_channel_title**: 是否在消息头部显示频道名称。
 * **enable_deduplication**: 是否启用转发查重。开启后，如果频道 A 转发了频道 B 的消息，且频道 B 也在监控列表中，则频道 A 的这条转发消息将被自动跳过。
 * **exclude_text_on_media**: 开启后，包含媒体的消息将不再发送文本内容（包含 From 头部）。

@@ -63,6 +63,13 @@
                         "type": "string",
                         "description": "频道用户名 (不带@)"
                     },
+                    "target_qq_groups": {
+                        "description": "该频道专属的 QQ 目标群号",
+                        "type": "list",
+                        "item_type": "int",
+                        "default": [],
+                        "hint": "填写则覆盖全局 QQ 目标群号 留空使用全局配置"
+                    },
                     "start_time": {
                         "type": "string",
                         "description": "起始日期 (YYYY-MM-DD)",
@@ -105,6 +112,12 @@
                         "type": "float",
                         "default": 0,
                         "hint": "除图片外的媒体大小限制，0 表示不限制"
+                    },
+                    "ignore_global_filters": {
+                        "description": "忽略全局文本过滤",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "开启后，该频道将**忽略全局**的 filter_keywords 和 filter_regex（但仍执行本频道自己的过滤规则）。常用于白名单式频道或重要通知频道。"
                     },
                     "filter_keywords": {
                         "type": "list",
@@ -166,6 +179,12 @@
         "description": "全局转发配置",
         "hint": "配置全局转发配置与过滤规则",
         "items": {
+            "qq_merge_threshold": {
+            "description": "QQ 大合并",
+            "type": "int",
+            "default": 0,
+            "hint": "本次要发的消息数 >= 此值时，全部打包成一条合并转发消息。设为 ≤1 则永不触发大合并。推荐 5~10"
+            },
             "use_channel_title": {
                 "type": "bool",
                 "default": true,
