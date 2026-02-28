@@ -57,9 +57,11 @@ class QQSender:
         batches: List[List[Message]],
         src_channel: str,
         display_name: str = None,
-        exclude_text_on_media: bool = False,
         target_qq_groups: List[int] = None,
+        effective_cfg: dict = None,
     ):
+        exclude_text_on_media = effective_cfg["exclude_text_on_media"]       
+        strip_links = effective_cfg["strip_markdown_links"]
         qq_groups = target_qq_groups if target_qq_groups is not None else self.config.get("target_qq_group", [])
         
         napcat_url = self.config.get("napcat_api_url")
@@ -123,7 +125,7 @@ class QQSender:
                         current_node_components = []
                         text_parts = []
                         if msg.text:
-                            cleaned = clean_telegram_text(msg.text)
+                            cleaned = clean_telegram_text(msg.text, strip_links=strip_links)
                             if cleaned: text_parts.append(cleaned)
                         
                         media_components = []
@@ -255,7 +257,7 @@ class QQSender:
                             try:
                                 for msg in msgs:
                                     if msg.text:
-                                        cleaned = clean_telegram_text(msg.text)
+                                        cleaned = clean_telegram_text(msg.text, strip_links=strip_markdown_links)
                                         if cleaned: combined_text_parts.append(cleaned)
                                     msg_max_size = getattr(msg, "_max_file_size", 0)
                                     files = await self.downloader.download_media(msg, max_size_mb=msg_max_size)

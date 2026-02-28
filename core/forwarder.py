@@ -251,7 +251,18 @@ class Forwarder:
                 and global_cfg.get("filter_spoiler_messages", False)
             )
         )
-        
+
+        # 3.9 新增：Markdown 链接剥离规则
+        strip_global = global_cfg.get("strip_markdown_links", False)
+        strip_channel_raw = channel_cfg.get("strip_markdown_links", "继承全局")
+
+        if strip_channel_raw == "开启":
+            strip_markdown_links = True
+        elif strip_channel_raw == "关闭":
+            strip_markdown_links = False
+        else:
+            strip_markdown_links = strip_global
+
         channel_specific_groups = channel_cfg.get("target_qq_groups", [])
         if channel_specific_groups:  # 非空列表 → 使用频道专属配置
             effective_qq_groups = channel_specific_groups
@@ -271,6 +282,7 @@ class Forwarder:
             "priority": priority,
             "exclude_text_on_media": exclude_text_on_media,
             "filter_spoiler_messages": filter_spoiler_messages,
+            "strip_markdown_links": strip_markdown_links,
             "start_time": channel_cfg.get("start_time", ""),
             "msg_limit": channel_cfg.get("msg_limit", 20),
             "effective_target_qq_groups": effective_qq_groups,
@@ -786,8 +798,8 @@ class Forwarder:
                     batches=msg_groups,
                     src_channel=src_channel,
                     display_name=display_name,
-                    exclude_text_on_media=effective_cfg["exclude_text_on_media"],
-                    target_qq_groups=target_groups
+                    target_qq_groups=target_groups,
+                    effective_cfg=effective_cfg
                 )
                 
     

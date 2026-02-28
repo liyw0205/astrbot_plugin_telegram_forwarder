@@ -139,6 +139,13 @@
                         "default": "继承全局",
                         "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
                     },
+                    "strip_markdown_links": {
+                        "description": "剥离 Markdown 链接，只保留文本",
+                        "type": "string",
+                        "options": ["继承全局", "开启", "关闭"],
+                        "default": "继承全局",
+                        "hint": "开启后该频道 [文本](链接) 只保留文本"
+                    },
                     "monitor_keywords": {
                         "type": "list",
                         "item_type": "string",
@@ -208,6 +215,12 @@
                 "type": "bool",
                 "default": false,
                 "hint": "开启后，带有 Telegram 剧透标记（文本或媒体）的消息将被跳过"
+            },
+            "strip_markdown_links": {
+                "description": "剥离 Markdown 链接，只保留文本",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，[文本](链接) 只保留「文本」，链接部分被完全丢弃"
             },
             "forward_types": {
                 "description": "转发消息类型",
