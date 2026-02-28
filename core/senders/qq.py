@@ -13,7 +13,7 @@ from ..downloader import MediaDownloader
 
 class QQSender:
     """
-    负责将消息转发到 QQ 群 (支持合并相册)
+    负责将消息转发到 QQ 群
     """
 
     def __init__(
@@ -59,13 +59,26 @@ class QQSender:
         display_name: str = None,
         target_qq_groups: List[int] = None,
         effective_cfg: dict = None,
+        involved_channels: List[str] = None,           # 新增：混合模式时传入实际涉及的频道列表
     ):
-        exclude_text_on_media = effective_cfg["exclude_text_on_media"]       
-        strip_links = effective_cfg["strip_markdown_links"]
+        """
+        转发消息到 QQ 群
+        """
+        if effective_cfg is None:
+            effective_cfg = {}
+        
+        if involved_channels and len(involved_channels) > 1:
+            global_cfg = self.config.get("forward_config", {})
+            strip_links = global_cfg.get("strip_markdown_links", False)
+            exclude_text_on_media = global_cfg.get("exclude_text_on_media", False)
+        else:
+            exclude_text_on_media = effective_cfg.get("exclude_text_on_media", False)
+            strip_links = effective_cfg.get("strip_markdown_links", False)
+
         qq_groups = target_qq_groups if target_qq_groups is not None else self.config.get("target_qq_group", [])
-        
+    
         napcat_url = self.config.get("napcat_api_url")
-        
+    
         if not qq_groups or not napcat_url or not batches:
             return
     
@@ -75,10 +88,24 @@ class QQSender:
             return
     
         url = napcat_url if napcat_url else "http://127.0.0.1:3000/send_group_msg"
-        is_localhost = url.lower() == "localhost" or "127.0.0.1" in url.lower()
+        is_localhost = url.lower() in ["localhost", "127.0.0.1", "http://localhost", "http://127.0.0.1:3000"]
     
         forward_cfg = self.config.get("forward_config", {})
         qq_merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
+    
+        # 兼容大合并调用时多包一层的情况
+        real_batches = []
+        for item in batches:
+            if isinstance(item, list) and item and all(isinstance(sub, list) for sub in item):
+                real_batches.extend(item)
+            else:
+                real_batches.append(item)
+    
+        if not real_batches:
+            logger.debug("[QQSender] 展平后无有效批次，跳过发送")
+            return
+    
+        logger.debug(f"[QQSender] 接收到 {len(batches)} 批次，展平后 {len(real_batches)} 个逻辑批次")
     
         if is_localhost:
             qq_platform_id = self.platform_id
@@ -90,7 +117,8 @@ class QQSender:
             if not bot:
                 try:
                     platform = self.context.get_platform(qq_platform_id)
-                    if platform: bot = platform.bot
+                    if platform:
+                        bot = platform.bot
                     if not bot:
                         all_platforms = self.context.get_all_platforms()
                         if all_platforms:
@@ -100,7 +128,7 @@ class QQSender:
                                     break
                 except Exception as e:
                     logger.error(f"[QQSender] 获取 bot 实例失败: {e}")
-            
+    
             self_id = 0
             node_name = await self._ensure_node_name(bot) if bot else "AstrBot"
             if bot:
@@ -110,24 +138,40 @@ class QQSender:
                 except Exception as e:
                     logger.error(f"[QQSender] 获取 bot 详细信息失败: {e}")
     
-            # 统一显示名称格式
-            header_name = display_name or src_channel
-            header_name = header_name if header_name.startswith("@") else f"@{header_name}"
-            header = f"From {header_name}:"
+            # ─── 判断是否为混合频道大合并模式 ───
+            is_mixed_big_merge = bool(involved_channels and len(involved_channels) > 1)
     
-            # 预处理所有批次（下载文件、生成组件）
+            if is_mixed_big_merge:
+                # 构造清晰的多频道 From
+                formatted = [f"@{ch.lstrip('@')}" for ch in sorted(involved_channels)]
+                if len(formatted) <= 4:
+                    channels_str = " ".join(formatted)
+                else:
+                    channels_str = " ".join(formatted[:4]) + f" 等{len(formatted)-4}个频道"
+                header = f"From {channels_str}:"
+                logger.debug(f"[QQSender] 混合大合并 From: {header}")
+            else:
+                # 普通情况（单频道或独立频道模式）
+                header_name = display_name or src_channel
+                header_name = header_name if header_name.startswith("@") else f"@{header_name}"
+                header = f"From {header_name}:"
+    
+            # 预处理所有批次
             processed_batches = []
-            for msgs in batches:
+            header_added = False  # 用于混合模式：只在全局第一个节点加 header
+    
+            for msgs in real_batches:
                 all_local_files = []
-                all_nodes_data = [] 
+                all_nodes_data = []
                 try:
                     for i, msg in enumerate(msgs):
                         current_node_components = []
                         text_parts = []
                         if msg.text:
                             cleaned = clean_telegram_text(msg.text, strip_links=strip_links)
-                            if cleaned: text_parts.append(cleaned)
-                        
+                            if cleaned:
+                                text_parts.append(cleaned)
+    
                         media_components = []
                         has_any_attachment = False
                         msg_max_size = getattr(msg, "_max_file_size", 0)
@@ -146,7 +190,20 @@ class QQSender:
                                 media_components.append(File(file=fpath, name=os.path.basename(fpath)))
     
                         should_exclude_text = exclude_text_on_media and has_any_attachment
-                        if i == 0 and not should_exclude_text:
+    
+                        # ─── 决定是否添加 From 头部 ───
+                        add_header_this_time = False
+                        if is_mixed_big_merge:
+                            # 混合大合并：**只在整个合并的第一个消息**加 From
+                            if not header_added and i == 0:
+                                add_header_this_time = True
+                                header_added = True
+                        else:
+                            # 普通/独立模式：每个小相册/单条的第一个消息加 From
+                            if i == 0:
+                                add_header_this_time = True
+    
+                        if add_header_this_time:
                             if text_parts:
                                 text_parts[0] = f"{header}\n\u200b{text_parts[0]}"
                             else:
@@ -155,12 +212,16 @@ class QQSender:
                         if not should_exclude_text:
                             for t in text_parts:
                                 current_node_components.append(Plain(t + "\n"))
-                        
+    
                         current_node_components.extend(media_components)
+    
                         if current_node_components:
-                            is_only_header = (i == 0 and len(current_node_components) == 1 and 
-                                            isinstance(current_node_components[0], Plain) and 
-                                            current_node_components[0].text.strip("\u200b\n") in [header, ""])
+                            # 避免生成只有 header 的空节点
+                            is_only_header = (
+                                len(current_node_components) == 1 and
+                                isinstance(current_node_components[0], Plain) and
+                                current_node_components[0].text.strip("\u200b\n") in [header, ""]
+                            )
                             if not is_only_header:
                                 all_nodes_data.append(current_node_components)
     
@@ -172,19 +233,21 @@ class QQSender:
                 except Exception as e:
                     logger.error(f"[QQSender] 预处理消息批次异常: {e}")
                     self._cleanup_files(all_local_files)
+    
             use_big_merge = (qq_merge_threshold > 1) and (len(processed_batches) >= qq_merge_threshold)
-            if use_big_merge:
+            if use_big_merge and not is_mixed_big_merge:
                 logger.info(f"[QQSender] 本次 {len(processed_batches)} 个逻辑单元 >= 阈值 {qq_merge_threshold}，转为整组合并转发")
     
             # 发送到各个目标群组
             for gid in qq_groups:
-                if not gid: continue
+                if not gid:
+                    continue
                 lock = self._get_lock(gid)
                 async with lock:
                     unified_msg_origin = f"{qq_platform_id}:GroupMessage:{gid}"
     
-                    if use_big_merge:
-                        # ─── 大合并模式 ───
+                    if use_big_merge or is_mixed_big_merge:
+                        # ─── 大合并（包括混合模式） ───
                         all_sub_nodes_data = []
                         for batch_data in processed_batches:
                             all_sub_nodes_data.extend(batch_data["nodes_data"])
@@ -195,10 +258,15 @@ class QQSender:
                                 message_chain = MessageChain()
                                 message_chain.chain.append(Nodes(nodes_list))
                                 await self.context.send_message(unified_msg_origin, message_chain)
-                                logger.info(f"[QQSender] {node_name} -> 群 {gid}: 大合并转发 ({len(all_sub_nodes_data)} 子节点 / {len(processed_batches)} 逻辑单元)")
+                                logger.info(
+                                    f"[QQSender] {node_name} -> 群 {gid}: "
+                                    f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
+                                    f"({len(all_sub_nodes_data)} 子节点 / {len(processed_batches)} 逻辑单元)"
+                                )
                             except Exception as e:
                                 logger.error(f"[QQSender] 大合并转发到群 {gid} 失败: {e}")
                     else:
+                        # 普通发送（逐个小相册 / 单条）
                         for batch_data in processed_batches:
                             all_nodes_data = batch_data["nodes_data"]
                             try:
@@ -234,40 +302,44 @@ class QQSender:
                             except Exception as e:
                                 logger.error(f"[QQSender] 转发到群 {gid} 异常: {e}")
     
-            # 清理文件
-            for batch_data in processed_batches:
-                self._cleanup_files(batch_data["local_files"])
+                    # 清理文件
+                    for batch_data in processed_batches:
+                        self._cleanup_files(batch_data["local_files"])
     
         else:
-            # ───────────── HTTP (NapCat) 模式 ─────────────
-            # 如果也想在这里支持大合并，可参考上面逻辑改写，但复杂得多，建议优先使用 localhost 模式
+            # HTTP (NapCat) 模式 ── 暂未实现混合 From 和大合并，保持原有逻辑
+            # 如有需要可后续补充类似逻辑
             async with httpx.AsyncClient() as http:
                 header_name = display_name or src_channel
                 header_name = header_name if header_name.startswith("@") else f"@{header_name}"
                 header = f"From {header_name}:\n"
-                
+    
                 for gid in qq_groups:
-                    if not gid: continue
+                    if not gid:
+                        continue
                     lock = self._get_lock(gid)
                     async with lock:
-                        for msgs in batches:
+                        for msgs in real_batches:
                             all_local_files = []
                             combined_text_parts = []
                             has_any_attachment = False
                             try:
                                 for msg in msgs:
                                     if msg.text:
-                                        cleaned = clean_telegram_text(msg.text, strip_links=strip_markdown_links)
-                                        if cleaned: combined_text_parts.append(cleaned)
+                                        cleaned = clean_telegram_text(msg.text, strip_links=strip_links)
+                                        if cleaned:
+                                            combined_text_parts.append(cleaned)
                                     msg_max_size = getattr(msg, "_max_file_size", 0)
                                     files = await self.downloader.download_media(msg, max_size_mb=msg_max_size)
                                     for fpath in files:
                                         all_local_files.append(fpath)
                                         has_any_attachment = True
     
-                                final_body = "\n".join(combined_text_parts) if len(set(combined_text_parts)) > 1 else (combined_text_parts[0] if combined_text_parts else "")
+                                final_body = "\n".join(combined_text_parts) if len(set(combined_text_parts)) > 1 else (
+                                    combined_text_parts[0] if combined_text_parts else ""
+                                )
                                 final_text = header + final_body
-                                
+    
                                 message = []
                                 if not (exclude_text_on_media and has_any_attachment) and final_text.strip():
                                     message.append({"type": "text", "data": {"text": final_text}})
