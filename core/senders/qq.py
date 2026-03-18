@@ -195,18 +195,20 @@ class QQSender:
                                 media_components.append(File(file=fpath, name=os.path.basename(fpath)))
     
                         should_exclude_text = exclude_text_on_media and has_any_attachment
-    
+
                         # ─── 决定是否添加 From 头部 ───
                         add_header_this_time = False
-                        if is_mixed_big_merge:
-                            # 混合大合并：**只在整个合并的第一个消息**加 From
-                            if not header_added and i == 0:
-                                add_header_this_time = True
-                                header_added = True
-                        else:
-                            # 普通/独立模式：每个小相册/单条的第一个消息加 From
-                            if i == 0:
-                                add_header_this_time = True
+                        # 媒体消息仅发送媒体模式下，不添加 From 头部
+                        if not should_exclude_text:
+                            if is_mixed_big_merge:
+                                # 混合大合并：**只在整个合并的第一个消息**加 From
+                                if not header_added and i == 0:
+                                    add_header_this_time = True
+                                    header_added = True
+                            else:
+                                # 普通/独立模式：每个小相册/单条的第一个消息加 From
+                                if i == 0:
+                                    add_header_this_time = True
     
                         if add_header_this_time:
                             if text_parts:

@@ -117,7 +117,7 @@
                         "description": "忽略全局文本过滤",
                         "type": "bool",
                         "default": false,
-                        "hint": "开启后，该频道将**忽略全局**的 filter_keywords 和 filter_regex（但仍执行本频道自己的过滤规则）。常用于白名单式频道或重要通知频道。"
+                        "hint": "开启后，该频道将忽略全局的过滤规则（但仍执行本频道自己的过滤规则）。常用于白名单式频道或重要通知频道。"
                     },
                     "filter_keywords": {
                         "type": "list",
