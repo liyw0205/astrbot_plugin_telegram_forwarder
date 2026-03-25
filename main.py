@@ -94,12 +94,18 @@ class Main(star.Star):
         """
         # 启动 Telegram 客户端（处理登录、会话恢复等）
         if self.client_wrapper.client:
-            logger.info("正在尝试连接 Telegram 客户端...")
+            logger.debug("正在尝试连接 Telegram 客户端...")
             await self.client_wrapper.start()
         
         # 检查客户端是否成功连接并授权
         is_authorized = self.client_wrapper.is_authorized()
         logger.info(f"Telegram 客户端授权状态: {'已授权' if is_authorized else '未授权'}")
+
+        if hasattr(self.forwarder, "qq_sender"):
+            try:
+                await self.forwarder.qq_sender.initialize_runtime()
+            except Exception as e:
+                logger.debug(f"[Main] QQ sender runtime bootstrap failed: {e}")
 
         if is_authorized:
             # ========== 启动定时调度器 ==========
@@ -142,22 +148,6 @@ class Main(star.Star):
         else:
             logger.error("Telegram 客户端未授权，定时任务未启动。请检查 session 文件或 api_id/api_hash。")
 
-
-    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP | filter.PlatformAdapterType.QQOFFICIAL)
-    async def on_qq_message(self, event: AstrMessageEvent):
-        """通过接收到的消息动态捕获并确认 QQ 平台 ID"""
-        umo = event.unified_msg_origin
-        if ":" in umo:
-            platform_id = umo.split(":")[0]
-            if not self.bot or getattr(self.forwarder.qq_sender, "platform_id", None) != platform_id:
-                self.bot = event.bot
-                if hasattr(self, "forwarder") and hasattr(self.forwarder, "qq_sender"):
-                    self.forwarder.qq_sender.platform_id = platform_id
-                    self.forwarder.qq_sender.bot = event.bot
-                logger.debug(f"通过消息事件成功捕获/更新 QQ platform_id: {platform_id}")
-                
-                if hasattr(self.forwarder.qq_sender, "_ensure_node_name"):
-                    asyncio.create_task(self.forwarder.qq_sender._ensure_node_name(event.bot))
 
     async def terminate(self):
         """插件终止时的清理工作"""
@@ -204,46 +194,55 @@ def tg(self):
 
 @tg.command("add")
 async def add_channel(self, event: AstrMessageEvent, channel: str):
+    """添加监控频道"""
     async for result in self.command_handler.add_channel(event, channel):
         yield result
 
 @tg.command("rm")
 async def remove_channel(self, event: AstrMessageEvent, channel: str):
+    """移除监控频道"""
     async for result in self.command_handler.remove_channel(event, channel):
         yield result
 
 @tg.command("ls")
 async def list_channels(self, event: AstrMessageEvent):
+    """列出当前监控频道"""
     async for result in self.command_handler.list_channels(event):
         yield result
 
 @tg.command("check")
 async def force_check(self, event: AstrMessageEvent):
+    """立即触发一次抓取和发送"""
     async for result in self.command_handler.force_check(event):
         yield result
 
 @tg.command("status")
 async def status(self, event: AstrMessageEvent):
+    """查看插件运行状态"""
     async for result in self.command_handler.show_status(event):
         yield result
 
 @tg.command("pause")
 async def pause(self, event: AstrMessageEvent):
+    """暂停抓取与发送任务"""
     async for result in self.command_handler.pause(event):
         yield result
 
 @tg.command("resume")
 async def resume(self, event: AstrMessageEvent):
+    """恢复抓取与发送任务"""
     async for result in self.command_handler.resume(event):
         yield result
 
 @tg.command("queue")
 async def queue(self, event: AstrMessageEvent):
+    """查看待发送队列"""
     async for result in self.command_handler.show_queue(event):
         yield result
 
 @tg.command("clearqueue")
 async def clearqueue(self, event: AstrMessageEvent, target: str = None):
+    """清空待发送队列"""
     async for result in self.command_handler.clear_queue(event, target):
         yield result
 
@@ -270,5 +269,6 @@ async def set_config(self, event: AstrMessageEvent, args: str = ""):
 
 @tg.command("help")
 async def show_help(self, event: AstrMessageEvent):
+    """显示插件命令帮助"""
     async for result in self.command_handler.show_help(event):
         yield result

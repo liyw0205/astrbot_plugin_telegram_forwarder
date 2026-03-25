@@ -269,14 +269,14 @@ class Forwarder:
         else:
             strip_markdown_links = strip_global
     
-        channel_specific_groups = channel_cfg.get("target_qq_groups", [])
-        if channel_specific_groups:  # 非空列表 → 使用频道专属配置
-            effective_qq_groups = channel_specific_groups
-            has_exclusive_qq_groups = True
-            # 是否为专属群配置（用于决定是否参与混合频道大合并）
+        channel_specific_targets = channel_cfg.get("target_qq_sessions", [])
+        if channel_specific_targets:  # 非空列表 → 使用频道专属配置
+            effective_qq_targets = channel_specific_targets
+            has_exclusive_qq_targets = True
+            # 是否为专属目标配置（用于决定是否参与混合频道大合并）
         else:
-            effective_qq_groups = self.config.get("target_qq_group", [])  # 回退到全局
-            has_exclusive_qq_groups = False
+            effective_qq_targets = self.config.get("target_qq_session", [])
+            has_exclusive_qq_targets = False
     
         return {
             "forward_types": forward_types,
@@ -294,8 +294,8 @@ class Forwarder:
             "strip_markdown_links": strip_markdown_links,
             "start_time": channel_cfg.get("start_time", ""),
             "msg_limit": channel_cfg.get("msg_limit", 20),
-            "effective_target_qq_groups": effective_qq_groups,
-            "has_exclusive_qq_groups": has_exclusive_qq_groups,
+            "effective_target_qq_sessions": effective_qq_targets,
+            "has_exclusive_qq_sessions": has_exclusive_qq_targets,
         }
 
     def _is_curfew(self) -> bool:
@@ -807,11 +807,11 @@ class Forwarder:
     
                 for src_channel, msg_groups in qq_send_groups.items():
                     effective_cfg = self._get_effective_config(src_channel)
-                    target_groups = effective_cfg["effective_target_qq_groups"]
-                    if not target_groups:
+                    target_sessions = effective_cfg["effective_target_qq_sessions"]
+                    if not target_sessions:
                         continue
-    
-                    if effective_cfg["has_exclusive_qq_groups"]:
+
+                    if effective_cfg["has_exclusive_qq_sessions"]:
                         # 专属群 → 独立发送，不参与混合
                         display_name = await self._get_display_name(src_channel)
                         exclusive_tasks.append(
@@ -875,8 +875,8 @@ class Forwarder:
                 # 非混合模式 → 逐频道发送
                 for src_channel, msg_groups in qq_send_groups.items():
                     effective_cfg = self._get_effective_config(src_channel)
-                    target_groups = effective_cfg["effective_target_qq_groups"]
-                    if not target_groups:
+                    target_sessions = effective_cfg["effective_target_qq_sessions"]
+                    if not target_sessions:
                         continue
     
                     display_name = await self._get_display_name(src_channel)

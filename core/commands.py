@@ -34,6 +34,26 @@ class PluginCommands:
         cfg = self._find_channel_cfg(channel_name)
         return cfg.get("channel_username") if cfg else None
 
+    @staticmethod
+    def _parse_qq_targets(raw_value: str) -> list:
+        targets = []
+        for item in str(raw_value).split(","):
+            val = item.strip()
+            if not val:
+                continue
+            if val.isdigit():
+                targets.append(int(val))
+            else:
+                targets.append(val)
+        return targets
+
+    def _get_root_qq_targets(self):
+        return self.config.get("target_qq_session", [])
+
+    @staticmethod
+    def _get_channel_qq_targets(channel_cfg: dict):
+        return channel_cfg.get("target_qq_sessions", [])
+
     async def add_channel(self, event: AstrMessageEvent, channel: str):
         """添加监控频道"""
         if not channel:
@@ -266,7 +286,7 @@ class PluginCommands:
             return "*" * len(s)  # 太短直接全遮
 
         sensitive_fields = {
-            "api_id", "api_hash", "phone", "proxy", "napcat_api_url"
+            "api_id", "api_hash", "phone", "proxy"
         }
 
         if field_name not in sensitive_fields:
@@ -311,8 +331,7 @@ class PluginCommands:
         # ─── root 模式 ───
         if target_clean == "root":
             interesting_root_keys = [
-                "napcat_api_url",
-                "target_qq_group",
+                "target_qq_session",
                 "target_channel",
                 "phone",
                 "api_id",
@@ -323,7 +342,10 @@ class PluginCommands:
     
             root_display = {}
             for key in interesting_root_keys:
-                val = self.config.get(key)
+                if key == "target_qq_session":
+                    val = self._get_root_qq_targets()
+                else:
+                    val = self.config.get(key)
                 if key == "telegram_session":
                     if isinstance(val, list):
                         if not val:
@@ -453,7 +475,12 @@ class PluginCommands:
                 lines.append(f"• {display_name:<12} : {raw_str}{suffix}")
     
         if not is_global:
-            format_list_field("target_qq_groups", "专属 QQ 群", val_type=True)
+            channel_targets = self._get_channel_qq_targets(ch_cfg)
+            if channel_targets:
+                target_val = "、".join(str(x) for x in channel_targets)
+            else:
+                target_val = "无"
+            lines.append(f"• {'专属 QQ 目标':<12} : {target_val}")
     
         yield event.plain_result("\n".join(lines))
 
@@ -466,13 +493,12 @@ class PluginCommands:
             lines.append("【root 模式 - 可修改的根级别配置】")
             lines.append("─────────────")
             help_items = [
-                ("target_qq_group",    "QQ 目标群号列表（逗号分隔数字，如 123456,789012）"),
+                ("target_qq_session",  "QQ 目标会话列表（逗号分隔，支持群号或完整会话名）"),
                 ("target_channel",     "TG 目标频道（@xxx 或 -100xxxx，多个用逗号分隔）"),
                 ("phone",              "Telegram 登录手机号（国际格式，如 +86138xxxxxxxx）"),
                 ("api_id",             "Telegram API ID（纯数字，从 my.telegram.org 获取）"),
                 ("api_hash",           "Telegram API Hash（字符串，从 my.telegram.org 获取）"),
                 ("proxy",              "代理地址（例如 http://127.0.0.1:7890 或 socks5://...）"),
-                ("napcat_api_url",     "NapCat HTTP API 地址（通常为 localhost 或 127.0.0.1:6099）"),
             ]
 
         elif target_clean == "global":
@@ -513,7 +539,7 @@ class PluginCommands:
                 ("check_interval",      "本频道检测间隔（秒，0=使用全局）"),
                 ("msg_limit",           "单次最多抓取的消息条数（0=使用全局）"),
                 ("start_time",          "从哪一天开始补发历史消息（YYYY-MM-DD，留空=只抓新消息）"),
-                ("target_qq_groups",    "本频道专属的 QQ 目标群号（逗号分隔，留空=使用全局）"),
+                ("target_qq_sessions",  "本频道专属 QQ 目标会话（支持群号或完整会话名，逗号分隔，留空=使用全局）"),
                 ("forward_types",       "本频道允许转发的消息类型（文字,图片,视频,音频,文件）"),
                 ("max_file_size",       "本频道非图片媒体大小上限（MB，0=不限制）"),
                 ("exclude_text_on_media",     "媒体消息仅发送媒体（继承全局 / 开启 / 关闭）"),
@@ -542,13 +568,12 @@ class PluginCommands:
 
         if target_clean == "root":
             mapping = {
-                "target_qq_group": "QQ群号列表，例如：123456,789012",
+                "target_qq_session": "列表，例如：123456,平台ID:GroupMessage:123456,平台ID:FriendMessage:123456",
                 "target_channel":  "频道ID或用户名，例如：@mychannel,-100123456789",
                 "phone":           "手机号，例如：+8613812345678",
                 "api_id":          "纯数字，例如：1234567",
                 "api_hash":        "字符串，例如：a1b2c3d4e5f6g7h8i9j0",
                 "proxy":           "代理地址，例如：http://127.0.0.1:7890",
-                "napcat_api_url":  "地址，例如：localhost 或 127.0.0.1:6099",
             }
         elif target_clean == "global":
             mapping = {
@@ -576,7 +601,7 @@ class PluginCommands:
                 "check_interval":      "秒数（0=用全局），例如 30",
                 "msg_limit":           "条数（0=用全局），例如 10",
                 "start_time":          "日期 YYYY-MM-DD 或留空",
-                "target_qq_groups":    "群号列表，例如 123456,789012 或留空",
+                "target_qq_sessions":  "列表，例如 123456,平台ID:GroupMessage:123456,平台ID:FriendMessage:123456 或留空",
                 "forward_types":       "文字,图片,视频,音频,文件",
                 "max_file_size":       "MB（0=不限），例如 20",
                 "exclude_text_on_media":     "继承全局 / 开启 / 关闭",
@@ -640,7 +665,7 @@ class PluginCommands:
                 "check_interval":   int,
                 "msg_limit":        int,
                 "start_time":       str,
-                "target_qq_groups": lambda v: [int(x.strip()) for x in v.split(',') if x.strip().isdigit()],
+                "target_qq_sessions": self._parse_qq_targets,
                 "forward_types":    lambda v: [x.strip() for x in v.split(',') if x.strip()],
                 "max_file_size":    float,
                 "exclude_text_on_media":   lambda v: v.lower() in ('true', '1', 'yes', 'y', '开启', '开', '是'),
@@ -664,7 +689,7 @@ class PluginCommands:
                 target_name = f"@{channel_name}"
     
                 try:
-                    if is_clear_cmd and field in ("forward_types", "filter_keywords", "monitor_keywords", "target_qq_groups"):
+                    if is_clear_cmd and field in ("forward_types", "filter_keywords", "monitor_keywords", "target_qq_sessions"):
                         value = []
                     else:
                         value = handler(value_str)
@@ -724,7 +749,7 @@ class PluginCommands:
                 "check_interval":   int,
                 "msg_limit":        int,
                 "start_time":       str,
-                "target_qq_groups": lambda v: [int(x.strip()) for x in v.split(',') if x.strip().isdigit()],
+                "target_qq_sessions": self._parse_qq_targets,
                 "forward_types":    lambda v: [x.strip() for x in v.split(',') if x.strip()],
                 "max_file_size":    float,
                 "exclude_text_on_media":   lambda v: v.lower() in ('true', '1', 'yes', 'y', '开启', '开', '是'),
@@ -748,7 +773,7 @@ class PluginCommands:
             raw_lower = value_str.strip().lower()
             is_clear_cmd = raw_lower in ("[]", "清空", "clear", "none", "empty", "null")
             try:
-                if is_clear_cmd and field in ("forward_types", "filter_keywords", "monitor_keywords", "target_qq_groups"):
+                if is_clear_cmd and field in ("forward_types", "filter_keywords", "monitor_keywords", "target_qq_sessions"):
                     value_preview = []
                 else:
                     value_preview = field_handlers[field](value_str)
@@ -801,11 +826,10 @@ class PluginCommands:
         value_str = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
 
         target_clean = target.lstrip("@").lower()
-
         if target_clean == "root":
             allowed_root_fields = {
-                "target_qq_group", "target_channel", "phone",
-                "api_id", "api_hash", "proxy", "napcat_api_url"
+                "target_qq_session", "target_channel", "phone",
+                "api_id", "api_hash", "proxy"
             }
 
             if field not in allowed_root_fields:
@@ -825,15 +849,11 @@ class PluginCommands:
                 return
 
             # root 字段解析逻辑
-            if field == "target_qq_group":
+            if field == "target_qq_session":
                 if value_str.lower() in ("[]", "清空", "clear", "none", "empty"):
                     value = []
                 else:
-                    try:
-                        value = [int(x.strip()) for x in value_str.split(',') if x.strip().isdigit()]
-                    except ValueError:
-                        yield event.plain_result(f"{field} 需要逗号分隔的纯数字群号")
-                        return
+                    value = self._parse_qq_targets(value_str)
             elif field == "target_channel":
                 if value_str.lower() in ("[]", "清空", "clear", "none", "empty"):
                     value = []
@@ -842,7 +862,7 @@ class PluginCommands:
             else:
                 value = value_str
 
-            old = self.config.get(field, "<未设置>")
+            old = self._get_root_qq_targets() if field == "target_qq_session" else self.config.get(field, "<未设置>")
             self.config[field] = value
             self.config.save_config()
 
@@ -898,7 +918,7 @@ class PluginCommands:
             "forward_types":    lambda v: [x.strip() for x in v.split(',') if x.strip()],
             "filter_keywords":  lambda v: [x.strip() for x in v.split(',') if x.strip()],
             "monitor_keywords": lambda v: [x.strip() for x in v.split(',') if x.strip()],
-            "target_qq_groups": lambda v: [int(x.strip()) for x in v.split(',') if x.strip().isdigit()],
+            "target_qq_sessions": self._parse_qq_targets,
         }
 
         if field not in field_handlers:
@@ -922,7 +942,7 @@ class PluginCommands:
         raw_lower = value_str.strip().lower()
         is_clear_cmd = raw_lower in ("[]", "清空", "clear", "none", "empty", "null")
 
-        if is_clear_cmd and field in ("forward_types", "filter_keywords", "monitor_keywords", "target_qq_groups"):
+        if is_clear_cmd and field in ("forward_types", "filter_keywords", "monitor_keywords", "target_qq_sessions"):
             value = []
         else:
             try:

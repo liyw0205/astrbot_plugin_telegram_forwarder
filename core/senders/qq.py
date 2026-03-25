@@ -1,7 +1,6 @@
 import os
 import asyncio
-import httpx
-from typing import List
+from typing import List, Optional, Iterable
 from telethon.tl.types import Message
 from astrbot.api import logger, AstrBotConfig, star
 from astrbot.api.event import MessageChain
@@ -52,6 +51,133 @@ class QQSender:
             self._group_locks[group_id] = asyncio.Lock()
         return self._group_locks[group_id]
 
+    async def initialize_runtime(self):
+        """Best-effort bootstrap for platform_id/bot before first forward."""
+        await self._bootstrap_qq_runtime()
+        if not self.platform_id:
+            logger.warning("[QQSender] 初始化阶段未捕获到 QQ 平台实例，后续若使用纯数字目标将无法自动拼接会话名。")
+
+    def _get_platform_instances(self) -> list:
+        pm = getattr(self.context, "platform_manager", None)
+        if not pm:
+            return []
+        if hasattr(pm, "platform_insts"):
+            insts = getattr(pm, "platform_insts") or []
+            return list(insts)
+        if hasattr(pm, "get_insts"):
+            try:
+                insts = pm.get_insts()
+                return list(insts or [])
+            except Exception:
+                return []
+        return []
+
+    @staticmethod
+    def _dedupe_keep_order(items: Iterable[str]) -> List[str]:
+        seen = set()
+        result: List[str] = []
+        for item in items:
+            if item in seen:
+                continue
+            seen.add(item)
+            result.append(item)
+        return result
+
+    @staticmethod
+    def _split_qq_targets(targets: list) -> tuple[List[str], List[str]]:
+        """Split config targets into full sessions and numeric group IDs."""
+        session_targets: List[str] = []
+        group_ids: List[str] = []
+        for raw in targets:
+            if raw is None:
+                continue
+            if isinstance(raw, str):
+                val = raw.strip()
+            else:
+                val = str(raw).strip()
+            if not val:
+                continue
+            if ":" in val:
+                session_targets.append(val)
+            elif val.isdigit():
+                group_ids.append(val)
+            else:
+                logger.warning(f"[QQSender] Ignore invalid QQ target: {val}")
+        return session_targets, group_ids
+
+    @staticmethod
+    def _session_platform_ids(session_targets: List[str]) -> List[str]:
+        platform_ids: List[str] = []
+        for session in session_targets:
+            if ":" not in session:
+                continue
+            platform_ids.append(session.split(":", 1)[0])
+        return QQSender._dedupe_keep_order(platform_ids)
+
+    async def _bootstrap_qq_runtime(self, preferred_platform_ids: Optional[List[str]] = None):
+        """Try to fetch platform_id and bot from context.platform_manager."""
+        if self.platform_id and self.bot:
+            return
+
+        platforms = self._get_platform_instances()
+        if not platforms:
+            return
+
+        candidates = []
+        for platform in platforms:
+            try:
+                meta = platform.meta()
+                pid = getattr(meta, "id", None)
+                pname_raw = str(getattr(meta, "name", ""))
+                pname = pname_raw.lower()
+                if pid:
+                    candidates.append((platform, str(pid), pname, pname_raw))
+            except Exception:
+                continue
+
+        if not candidates:
+            return
+
+        selected = None
+        preferred = set(preferred_platform_ids or [])
+        if preferred:
+            for item in candidates:
+                if item[1] in preferred:
+                    selected = item
+                    break
+        if selected is None and self.platform_id:
+            for item in candidates:
+                if item[1] == self.platform_id:
+                    selected = item
+                    break
+        if selected is None:
+            for item in candidates:
+                if item[2] == "aiocqhttp":
+                    selected = item
+                    break
+        if selected is None:
+            for item in candidates:
+                if "qq" in item[2] or "onebot" in item[2]:
+                    selected = item
+                    break
+        if selected is None:
+            selected = candidates[0]
+
+        platform, pid, _, pname_raw = selected
+        self.platform_id = pid
+        logger.debug(f"[QQSender] 捕获到 QQ 平台: platform_id={pid}, platform_name={pname_raw or 'unknown'}")
+
+        try:
+            if hasattr(platform, "get_client"):
+                self.bot = platform.get_client()
+            elif hasattr(platform, "bot"):
+                self.bot = platform.bot
+        except Exception as e:
+            logger.debug(f"[QQSender] Bootstrap bot from platform failed: {e}")
+
+        if self.bot and not self.node_name:
+            await self._ensure_node_name(self.bot)
+
     async def send(
         self,
         batches: List[List[Message]],
@@ -74,26 +200,43 @@ class QQSender:
             exclude_text_on_media = effective_cfg.get("exclude_text_on_media", False)
             strip_links = effective_cfg.get("strip_markdown_links", False)
 
-        channel_specific_groups = effective_cfg.get("effective_target_qq_groups", [])
-        if channel_specific_groups:  # 非空列表 → 使用频道专属配置
-            effective_qq_groups = channel_specific_groups
+        channel_specific_targets = effective_cfg.get("effective_target_qq_sessions", [])
+        if channel_specific_targets:  # 非空列表 → 使用频道专属配置
+            effective_qq_targets = channel_specific_targets
         else:
-            effective_qq_groups = self.config.get("target_qq_group", [])  # 回退到全局
+            effective_qq_targets = self.config.get("target_qq_session", [])
 
-        qq_groups = effective_qq_groups
-    
-        napcat_url = self.config.get("napcat_api_url")
-    
-        if not qq_groups or not napcat_url or not batches:
+        qq_targets = effective_qq_targets
+
+        if not qq_targets or not batches:
             return
     
-        if isinstance(qq_groups, int):
-            qq_groups = [qq_groups]
-        elif not isinstance(qq_groups, list):
+        if isinstance(qq_targets, int):
+            qq_targets = [qq_targets]
+        elif not isinstance(qq_targets, list):
             return
     
-        url = napcat_url if napcat_url else "http://127.0.0.1:3000/send_group_msg"
-        is_localhost = url.lower() in ["localhost", "127.0.0.1", "http://localhost", "http://127.0.0.1:3000"]
+        session_targets_cfg, numeric_group_ids = self._split_qq_targets(qq_targets)
+        preferred_platform_ids = self._session_platform_ids(session_targets_cfg)
+        if numeric_group_ids or session_targets_cfg:
+            await self._bootstrap_qq_runtime(preferred_platform_ids=preferred_platform_ids)
+
+        context_target_sessions = list(session_targets_cfg)
+        qq_platform_id = self.platform_id
+        if numeric_group_ids:
+            if qq_platform_id:
+                context_target_sessions.extend(
+                    [f"{qq_platform_id}:GroupMessage:{gid}" for gid in numeric_group_ids]
+                )
+            else:
+                logger.warning(
+                    "[QQSender] Localhost mode cannot resolve platform_id for numeric QQ target. "
+                    "Use full session name (platform:MessageType:target_id) or ensure platform is loaded."
+                )
+        context_target_sessions = self._dedupe_keep_order(context_target_sessions)
+
+        if not context_target_sessions:
+            return
     
         forward_cfg = self.config.get("forward_config", {})
         qq_merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
@@ -112,27 +255,20 @@ class QQSender:
     
         logger.debug(f"[QQSender] 接收到 {len(batches)} 批次，展平后 {len(real_batches)} 个逻辑批次")
     
-        if is_localhost:
-            qq_platform_id = self.platform_id
-            if not qq_platform_id:
-                logger.warning("[QQSender] Localhost 模式下尚未捕获到有效的 QQ 平台 ID（请尝试发送一条消息给bot），跳过本次转发。")
-                return
-    
+        if context_target_sessions:
             bot = self.bot
-            if not bot:
+            if not bot and qq_platform_id:
                 try:
-                    platform = self.context.get_platform(qq_platform_id)
+                    platform = self.context.get_platform_inst(qq_platform_id)
                     if platform:
-                        bot = platform.bot
-                    if not bot:
-                        all_platforms = self.context.get_all_platforms()
-                        if all_platforms:
-                            for p in all_platforms:
-                                if hasattr(p, "platform_config") and p.platform_config.get("id") == qq_platform_id:
-                                    bot = p.bot
-                                    break
+                        if hasattr(platform, "get_client"):
+                            bot = platform.get_client()
+                        elif hasattr(platform, "bot"):
+                            bot = platform.bot
                 except Exception as e:
-                    logger.error(f"[QQSender] 获取 bot 实例失败: {e}")
+                    logger.error(f"[QQSender] Failed to get bot instance: {e}")
+            if bot and not self.bot:
+                self.bot = bot
     
             self_id = 0
             node_name = await self._ensure_node_name(bot) if bot else "AstrBot"
@@ -246,12 +382,12 @@ class QQSender:
                 logger.info(f"[QQSender] 本次 {len(processed_batches)} 个逻辑单元 >= 阈值 {qq_merge_threshold}，转为整组合并转发")
     
             # 发送到各个目标群组
-            for gid in qq_groups:
-                if not gid:
+            for target_session in context_target_sessions:
+                if not target_session:
                     continue
-                lock = self._get_lock(gid)
+                lock = self._get_lock(target_session)
                 async with lock:
-                    unified_msg_origin = f"{qq_platform_id}:GroupMessage:{gid}"
+                    unified_msg_origin = target_session
     
                     if use_big_merge or is_mixed_big_merge:
                         # ─── 大合并（包括混合模式） ───
@@ -266,12 +402,12 @@ class QQSender:
                                 message_chain.chain.append(Nodes(nodes_list))
                                 await self.context.send_message(unified_msg_origin, message_chain)
                                 logger.info(
-                                    f"[QQSender] {node_name} -> 群 {gid}: "
+                                    f"[QQSender] {node_name} -> {target_session}: "
                                     f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
                                     f"({len(all_sub_nodes_data)} 子节点 / {len(processed_batches)} 逻辑单元)"
                                 )
                             except Exception as e:
-                                logger.error(f"[QQSender] 大合并转发到群 {gid} 失败: {e}")
+                                logger.error(f"[QQSender] 大合并转发到 {target_session} 失败: {e}")
                     else:
                         # 普通发送（逐个小相册 / 单条）
                         for batch_data in processed_batches:
@@ -283,7 +419,7 @@ class QQSender:
                                     nodes_list = [Node(uin=self_id, name=node_name, content=nc) for nc in all_nodes_data]
                                     message_chain.chain.append(Nodes(nodes_list))
                                     await self.context.send_message(unified_msg_origin, message_chain)
-                                    logger.info(f"[QQSender] {node_name} -> 群 {gid}: 相册合并 ({len(all_nodes_data)} 节点)")
+                                    logger.info(f"[QQSender] {node_name} -> {target_session}: 相册合并 ({len(all_nodes_data)} 节点)")
                                 else:
                                     # 单条消息（可能含特殊媒体需拆分）
                                     components = all_nodes_data[0]
@@ -299,89 +435,20 @@ class QQSender:
                                             chain = MessageChain()
                                             chain.chain.extend(common_components)
                                             await self.context.send_message(unified_msg_origin, chain)
-                                        logger.info(f"[QQSender] {node_name} -> 群 {gid}: 单条消息 (已拆分特殊媒体)")
+                                        logger.info(f"[QQSender] {node_name} -> {target_session}: 单条消息 (已拆分特殊媒体)")
                                     else:
                                         message_chain = MessageChain()
                                         message_chain.chain.extend(components)
                                         await self.context.send_message(unified_msg_origin, message_chain)
-                                        logger.info(f"[QQSender] {node_name} -> 群 {gid}: 单条普通消息")
+                                        logger.info(f"[QQSender] {node_name} -> {target_session}: 单条普通消息")
                                 await asyncio.sleep(1)
                             except Exception as e:
-                                logger.error(f"[QQSender] 转发到群 {gid} 异常: {e}")
+                                logger.error(f"[QQSender] 转发到 {target_session} 异常: {e}")
     
             # 清理文件
             for batch_data in processed_batches:
                 self._cleanup_files(batch_data["local_files"])
     
-        else:
-            # HTTP (NapCat) 模式 ── 暂未实现混合 From 和大合并，保持原有逻辑
-            # 如有需要可后续补充类似逻辑
-            async with httpx.AsyncClient() as http:
-                header_name = display_name or src_channel
-                header_name = header_name if header_name.startswith("@") else f"@{header_name}"
-                header = f"From {header_name}:\n"
-    
-                for gid in qq_groups:
-                    if not gid:
-                        continue
-                    lock = self._get_lock(gid)
-                    async with lock:
-                        for msgs in real_batches:
-                            all_local_files = []
-                            combined_text_parts = []
-                            has_any_attachment = False
-                            try:
-                                for msg in msgs:
-                                    if msg.text:
-                                        cleaned = clean_telegram_text(msg.text, strip_links=strip_links)
-                                        if cleaned:
-                                            combined_text_parts.append(cleaned)
-                                    msg_max_size = getattr(msg, "_max_file_size", 0)
-                                    files = await self.downloader.download_media(msg, max_size_mb=msg_max_size)
-                                    for fpath in files:
-                                        all_local_files.append(fpath)
-                                        has_any_attachment = True
-    
-                                final_body = "\n".join(combined_text_parts) if len(set(combined_text_parts)) > 1 else (
-                                    combined_text_parts[0] if combined_text_parts else ""
-                                )
-                                final_text = header + final_body
-    
-                                message = []
-                                if not (exclude_text_on_media and has_any_attachment) and final_text.strip():
-                                    message.append({"type": "text", "data": {"text": final_text}})
-    
-                                for fpath in all_local_files:
-                                    ext = os.path.splitext(fpath)[1].lower()
-                                    if ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]:
-                                        message.append({"type": "image", "data": {"file": f"file:///{os.path.abspath(fpath)}"}})
-                                    elif ext == ".wav":
-                                        message.append({"type": "record", "data": {"file": f"file:///{os.path.abspath(fpath)}"}})
-                                    elif ext == ".mp4":
-                                        message.append({"type": "video", "data": {"file": f"file:///{os.path.abspath(fpath)}"}})
-                                    else:
-                                        message.append({"type": "file", "data": {"file": f"file:///{os.path.abspath(fpath)}", "name": os.path.basename(fpath)}})
-    
-                                if message:
-                                    try:
-                                        special_types = ["record", "file", "video"]
-                                        has_special = any(node.get("type") in special_types for node in message)
-                                        if has_special:
-                                            for spec_node in [n for n in message if n.get("type") in special_types]:
-                                                await http.post(url, json={"group_id": gid, "message": [spec_node]}, timeout=60)
-                                            common_nodes = [n for n in message if n.get("type") not in special_types]
-                                            if common_nodes:
-                                                await http.post(url, json={"group_id": gid, "message": common_nodes}, timeout=60)
-                                            logger.info(f"[QQSender] HTTP 转发包含特殊媒体到群 {gid} (已拆分)")
-                                        else:
-                                            await http.post(url, json={"group_id": gid, "message": message}, timeout=60)
-                                            logger.info(f"[QQSender] HTTP 转发消息到群 {gid}")
-                                        await asyncio.sleep(1)
-                                    except Exception as e:
-                                        logger.error(f"[QQSender] HTTP 发送到群 {gid} 失败: {e}")
-                            finally:
-                                self._cleanup_files(all_local_files)
-
     def _cleanup_files(self, files: List[str]):
         """清理临时下载的文件"""
         for f in files:

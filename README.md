@@ -76,15 +76,14 @@
 
 ### 3. 目标平台配置
 * **QQ 配置**:
-  * `target_qq_group`: 接收消息的 QQ 群号列表。
-  * `napcat_api_url`: NapCat API 地址。若设为 `localhost`，则使用 AstrBot 内部接口发送（推荐）。
+  * `target_qq_session`: 接收消息的 QQ 目标会话列表（支持群号，或完整会话名，如 `平台ID:GroupMessage:群号` / `平台ID:FriendMessage:用户ID`）。
 * **Telegram 配置**:
   * `target_channel`: 接收消息的目标频道 ID。
 
 ### 4. 源频道配置
 您可以为每个频道进行精细化设置：
 * **channel_username**: 频道用户名 (不带 @)。
-* **target_qq_groups**: 填写则覆盖全局 QQ 目标群号 留空使用全局配置。
+* **target_qq_sessions**: 填写则覆盖全局 QQ 目标会话（支持群号或完整会话名），留空使用全局配置。
 * **start_time**: 起始日期 (YYYY-MM-DD)。留空则仅转发新消息。
 * **check_interval**: 专属检测间隔。为 0 时使用全局配置。
 * **priority**: 转发优先级。数值越大优先级越高。未设置或为 0 时优先级最低。高优先级频道的消息将优先于低优先级频道发送。
