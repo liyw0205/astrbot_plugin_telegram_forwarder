@@ -18,6 +18,8 @@ from .core.commands import PluginCommands
 class Main(star.Star):
     """Telegram 转发插件主类"""
 
+    STARTUP_GRACE_SECONDS = 30
+
     def __init__(self, context: star.Context, config: AstrBotConfig) -> None:
         """
         插件初始化
@@ -26,6 +28,7 @@ class Main(star.Star):
         self.context = context
         self.config = config
         self.bot = None
+        self._runtime_bootstrap_task = None
 
 
         # ========== 设置数据目录 ==========
@@ -101,13 +104,19 @@ class Main(star.Star):
         is_authorized = self.client_wrapper.is_authorized()
         logger.info(f"Telegram 客户端授权状态: {'已授权' if is_authorized else '未授权'}")
 
-        if hasattr(self.forwarder, "qq_sender"):
-            try:
-                await self.forwarder.qq_sender.initialize_runtime()
-            except Exception as e:
-                logger.debug(f"[Main] QQ sender runtime bootstrap failed: {e}")
-
         if is_authorized:
+            startup_grace = self.STARTUP_GRACE_SECONDS
+
+            if hasattr(self.forwarder, "qq_sender"):
+                async def _bootstrap_runtime_later():
+                    await asyncio.sleep(startup_grace)
+                    try:
+                        await self.forwarder.qq_sender.initialize_runtime()
+                    except Exception as e:
+                        logger.debug(f"[Main] QQ sender runtime delayed bootstrap failed: {e}")
+
+                self._runtime_bootstrap_task = asyncio.create_task(_bootstrap_runtime_later())
+
             # ========== 启动定时调度器 ==========
             # 从全局 forward_config 对象中获取间隔
             forward_config = self.config.get("forward_config", {})
@@ -115,7 +124,7 @@ class Main(star.Star):
             send_interval = forward_config.get("send_interval", 60)
 
             # 任务 1: 检查更新 (Capture)
-            check_start_time = datetime.now() + timedelta(seconds=5)
+            check_start_time = datetime.now() + timedelta(seconds=startup_grace)
             self.scheduler.add_job(
                 self.forwarder.check_updates,
                 "interval",
@@ -126,7 +135,7 @@ class Main(star.Star):
             )
 
             # 任务 2: 执行发送 (Send)
-            send_start_time = datetime.now() + timedelta(seconds=30)
+            send_start_time = datetime.now() + timedelta(seconds=startup_grace + 5)
             self.scheduler.add_job(
                 self.forwarder.send_pending_messages,
                 "interval",
@@ -152,6 +161,10 @@ class Main(star.Star):
     async def terminate(self):
         """插件终止时的清理工作"""
         logger.debug("[Main] 正在停止插件...")
+
+        # 取消延迟初始化任务
+        if self._runtime_bootstrap_task and not self._runtime_bootstrap_task.done():
+            self._runtime_bootstrap_task.cancel()
 
         # 0. 停止转发器逻辑
         if hasattr(self, "forwarder"):
