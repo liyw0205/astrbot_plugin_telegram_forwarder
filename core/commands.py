@@ -1,9 +1,16 @@
 import asyncio
 import json
 import random
+import os
 from collections import Counter
 from typing import Optional
 from datetime import datetime
+from telethon.errors import (
+    SessionPasswordNeededError,
+    PhoneCodeInvalidError,
+    PhoneCodeExpiredError,
+    FloodWaitError,
+)
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 from astrbot.api import AstrBotConfig, logger
@@ -20,11 +27,11 @@ class PluginCommands:
 
     def _find_channel_cfg(self, channel_name: str) -> Optional[dict]:
         """根据频道名（忽略大小写）查找对应的配置项，并返回原始配置"""
-        channel_name = channel_name.lstrip("@").strip()
+        channel_name = self._normalize_channel_name(channel_name)
         channels = self.config.get("source_channels", [])
         for cfg in channels:
             if isinstance(cfg, dict):
-                stored_name = cfg.get("channel_username", "")
+                stored_name = self._normalize_channel_name(cfg.get("channel_username", ""))
                 if stored_name.lower() == channel_name.lower():
                     return cfg
         return None
@@ -47,12 +54,297 @@ class PluginCommands:
                 targets.append(val)
         return targets
 
+    @staticmethod
+    def _normalize_channel_name(raw: str) -> str:
+        text = (raw or "").strip()
+        if not text:
+            return ""
+
+        text = text.lstrip("@").strip()
+        lower = text.lower()
+
+        if lower.startswith("https://t.me/") or lower.startswith("http://t.me/"):
+            text = text.split("://", 1)[1]
+        if text.lower().startswith("t.me/"):
+            text = text.split("/", 1)[1]
+
+        text = text.split("?", 1)[0].split("#", 1)[0].strip("/")
+        if "/" in text:
+            text = text.split("/", 1)[0]
+        return text.lstrip("@").strip()
+
     def _get_root_qq_targets(self):
         return self.config.get("target_qq_session", [])
 
     @staticmethod
     def _get_channel_qq_targets(channel_cfg: dict):
         return channel_cfg.get("target_qq_sessions", [])
+
+    @staticmethod
+    def _login_key(event: AstrMessageEvent) -> str:
+        return f"tg_login_{event.session_id}"
+
+    def _get_login_data(self, event: AstrMessageEvent) -> Optional[dict]:
+        return self.temp_data.get(self._login_key(event))
+
+    def _clear_login_data(self, event: AstrMessageEvent):
+        self.temp_data.pop(self._login_key(event), None)
+
+    def _sync_login_config(self, phone: str = ""):
+        """将登录流程中的关键信息回填到插件配置。"""
+        changed = False
+        phone_norm = self._normalize_phone(phone)
+        if phone_norm and self.config.get("phone") != phone_norm:
+            self.config["phone"] = phone_norm
+            changed = True
+        if changed:
+            self.config.save_config()
+    @staticmethod
+    def _decode_shifted_code(obfuscated_code: str) -> str:
+        """用户输入每位加 1 后的验证码，这里还原真实验证码。例: 90321 -> 89210"""
+        result = []
+        for ch in obfuscated_code.strip():
+            if ch.isdigit():
+                result.append(str((int(ch) - 1) % 10))
+            else:
+                result.append(ch)
+        return "".join(result)
+
+    @staticmethod
+    def _normalize_phone(phone: str) -> str:
+        # 鍏佽鐢ㄦ埛杈撳叆鍚┖鏍?鐭í绾跨殑鎵嬫満鍙凤紝鎻愪氦鍓嶇粺涓€娓呮礂
+        return (phone or "").replace(" ", "").replace("-", "").strip()
+
+    async def handle_login(self, event: AstrMessageEvent, args: str = ""):
+        raw = (args or "").strip()
+        if not raw:
+            yield event.plain_result(
+                "用法：\n"
+                "/tg login start [手机号]\n"
+                "/tg login code <验证码>\n"
+                "/tg login password <两步验证密码>\n"
+                "/tg login status\n"
+                "/tg login cancel\n"
+                "/tg login reset"
+            )
+            return
+
+        tokens = raw.split(maxsplit=1)
+        action = tokens[0].lower()
+        payload = tokens[1].strip() if len(tokens) > 1 else ""
+
+        if action == "start":
+            async for result in self._login_start(event, payload):
+                yield result
+            return
+        if action == "code":
+            async for result in self._login_code(event, payload):
+                yield result
+            return
+        if action == "password":
+            async for result in self._login_password(event, payload):
+                yield result
+            return
+        if action == "status":
+            async for result in self._login_status(event):
+                yield result
+            return
+        if action == "cancel":
+            self._clear_login_data(event)
+            yield event.plain_result("已取消当前登录流程。")
+            return
+        if action == "reset":
+            async for result in self._login_reset(event):
+                yield result
+            return
+
+        yield event.plain_result("未知子命令。可用：start / code / password / status / cancel / reset")
+
+    async def _login_start(self, event: AstrMessageEvent, phone_arg: str):
+        wrapper = self.forwarder.client_wrapper
+        if not wrapper or not wrapper.client:
+            yield event.plain_result("Telegram 客户端未就绪，请先配置 api_id / api_hash。")
+            return
+
+        try:
+            await wrapper.ensure_connected()
+            if await wrapper.client.is_user_authorized():
+                await wrapper._mark_authorized_if_needed()
+                me = None
+                try:
+                    me = await wrapper.client.get_me()
+                except Exception:
+                    pass
+                self._sync_login_config(getattr(me, "phone", "") if me else "")
+                self._clear_login_data(event)
+                yield event.plain_result(
+                    "当前 Telegram 账号已授权。\n"
+                    "如需切换账号，请先执行：/tg login reset"
+                )
+                return
+        except Exception as e:
+            logger.error(f"[Login] check authorized failed: {e}")
+            yield event.plain_result(f"连接 Telegram 失败：{e}")
+            return
+
+        phone = self._normalize_phone(phone_arg or (self.config.get("phone") or ""))
+        if not phone:
+            yield event.plain_result("请提供手机号，例如：/tg login start +8613812345678")
+            return
+
+        try:
+            phone_code_hash = await wrapper.send_login_code(phone)
+            self._sync_login_config(phone)
+            self.temp_data[self._login_key(event)] = {
+                "phone": phone,
+                "phone_code_hash": phone_code_hash,
+                "need_password": False,
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            yield event.plain_result(
+                "验证码已发送。\n"
+                "下一步：/tg login code <验证码>\n"
+                "注意：请输入每位加 1 后的验证码。\n"
+                "若开启两步验证：/tg login password <两步验证密码>"
+            )
+        except FloodWaitError as e:
+            wait_seconds = getattr(e, "seconds", 0) or 0
+            yield event.plain_result(f"请求过于频繁，请等待 {wait_seconds} 秒后重试。")
+        except Exception as e:
+            logger.error(f"[Login] send code failed: {e}")
+            yield event.plain_result(f"发送验证码失败：{e}")
+
+    async def _login_code(self, event: AstrMessageEvent, code: str):
+        if not code:
+            yield event.plain_result("请提供验证码，例如：/tg login code 12345")
+            return
+
+        login_data = self._get_login_data(event)
+        if not login_data:
+            yield event.plain_result("当前没有进行中的登录流程，请先执行 /tg login start。")
+            return
+
+        wrapper = self.forwarder.client_wrapper
+        try:
+            # 用户输入的是“每位加 1 后”的验证码，这里还原后再提交
+            real_code = self._decode_shifted_code(code)
+            ok, _ = await wrapper.sign_in_with_code(
+                phone=login_data["phone"],
+                code=real_code,
+                phone_code_hash=login_data.get("phone_code_hash", ""),
+            )
+            if ok:
+                self._sync_login_config(login_data.get("phone", ""))
+                self._clear_login_data(event)
+                yield event.plain_result("登录成功。")
+                return
+            yield event.plain_result("验证码已提交，但账号仍未授权。")
+        except SessionPasswordNeededError:
+            login_data["need_password"] = True
+            self.temp_data[self._login_key(event)] = login_data
+            yield event.plain_result("该账号已开启两步验证，请执行：/tg login password <两步验证密码>")
+        except PhoneCodeInvalidError:
+            yield event.plain_result("验证码错误。")
+        except PhoneCodeExpiredError:
+            self._clear_login_data(event)
+            yield event.plain_result("验证码已过期，请重新执行 /tg login start。")
+        except FloodWaitError as e:
+            wait_seconds = getattr(e, "seconds", 0) or 0
+            yield event.plain_result(f"请求过于频繁，请等待 {wait_seconds} 秒后重试。")
+        except Exception as e:
+            logger.error(f"[Login] submit code failed: {e}")
+            yield event.plain_result(f"提交验证码失败：{e}")
+
+    async def _login_password(self, event: AstrMessageEvent, password: str):
+        if not password:
+            yield event.plain_result("请提供两步验证密码，例如：/tg login password your_password")
+            return
+
+        login_data = self._get_login_data(event)
+        if not login_data:
+            yield event.plain_result("当前没有进行中的登录流程，请先执行 /tg login start。")
+            return
+
+        wrapper = self.forwarder.client_wrapper
+        try:
+            ok = await wrapper.sign_in_with_password(password.strip())
+            if ok:
+                self._sync_login_config(login_data.get("phone", ""))
+                self._clear_login_data(event)
+                yield event.plain_result("两步验证通过，登录完成。")
+            else:
+                yield event.plain_result("密码已提交，但账号仍未授权。")
+        except FloodWaitError as e:
+            wait_seconds = getattr(e, "seconds", 0) or 0
+            yield event.plain_result(f"请求过于频繁，请等待 {wait_seconds} 秒后重试。")
+        except Exception as e:
+            logger.error(f"[Login] submit password failed: {e}")
+            yield event.plain_result(f"提交两步验证密码失败：{e}")
+
+    async def _login_status(self, event: AstrMessageEvent):
+        wrapper = self.forwarder.client_wrapper
+        if not wrapper or not wrapper.client:
+            yield event.plain_result("Telegram 客户端未初始化。")
+            return
+
+        login_data = self._get_login_data(event)
+        connected = wrapper.is_connected()
+        authorized = wrapper.is_authorized()
+        if connected and not authorized:
+            try:
+                authorized = await wrapper.client.is_user_authorized()
+                if authorized:
+                    wrapper._authorized = True
+            except Exception:
+                pass
+        yield event.plain_result(
+            "登录状态：\n"
+            f"- 已连接：{connected}\n"
+            f"- 已授权：{authorized}\n"
+            f"- 登录流程进行中：{bool(login_data)}\n"
+            f"- 等待两步验证密码：{bool(login_data and login_data.get('need_password'))}\n"
+            f"- 当前流程手机号：{(login_data or {}).get('phone', '-')}"
+        )
+
+    async def _login_reset(self, event: AstrMessageEvent):
+        wrapper = self.forwarder.client_wrapper
+        if not wrapper:
+            yield event.plain_result("Telegram 客户端包装器未初始化。")
+            return
+
+        self._clear_login_data(event)
+
+        try:
+            if wrapper.client and wrapper.client.is_connected():
+                await wrapper.client.disconnect()
+        except Exception as e:
+            logger.debug(f"[Login] disconnect during reset failed: {e}")
+
+        try:
+            session_path = os.path.join(wrapper.plugin_data_dir, "user_session")
+            wrapper.clear_cache(session_path)
+
+            # 删除磁盘上的 session 相关文件（如果存在）
+            for suffix in (".session", ".session-journal"):
+                p = f"{session_path}{suffix}"
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception as e:
+                        logger.debug(f"[Login] remove session file failed {p}: {e}")
+
+            # 重新初始化客户端，确保不复用旧连接
+            wrapper.client = None
+            wrapper._authorized = False
+            wrapper._init_client()
+
+            yield event.plain_result(
+                "登录状态已重置。\n"
+                "请执行：/tg login start <手机号>"
+            )
+        except Exception as e:
+            logger.error(f"[Login] reset failed: {e}")
+            yield event.plain_result(f"重置失败：{e}")
 
     async def add_channel(self, event: AstrMessageEvent, channel: str):
         """添加监控频道"""
@@ -339,7 +631,6 @@ class PluginCommands:
                 "telegram_session",
                 "proxy",
             ]
-    
             root_display = {}
             for key in interesting_root_keys:
                 if key == "target_qq_session":
@@ -1002,8 +1293,6 @@ class PluginCommands:
     async def show_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
         help_text = (
-            "🤖 Telegram Forwarder 命令列表\n"
-            "─────────────\n"
             "/tg add <频道>       添加监控频道\n"
             "/tg rm <频道>        移除监控频道\n"
             "/tg ls               列出监控频道\n"
@@ -1015,6 +1304,12 @@ class PluginCommands:
             "/tg clearqueue [频道|all]  清空队列\n"
             "/tg get [global|频道] 查看配置\n"
             "/tg set <目标> <字段> <值>  修改配置\n"
-            "/tg help             显示此帮助"
+            "/tg login start [手机号]\n"
+            "/tg login code <验证码>（输入每位加 1 后的验证码）\n"
+            "/tg login password <两步验证密码>\n"
+            "/tg login status\n"
+            "/tg login cancel\n"
+            "/tg login reset\n"
+            "/tg help"
         )
         yield event.plain_result(help_text)
