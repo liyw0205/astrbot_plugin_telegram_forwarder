@@ -62,7 +62,7 @@ class TelegramClientWrapper:
         return getattr(sent, "phone_code_hash", "")
 
     async def sign_in_with_code(self, phone: str, code: str, phone_code_hash: str = ""):
-        """使用验证码登录；返回 (ok, need_password)。"""
+        """使用验证码登录。成功时返回 (True, False)，否则返回 (False, False)。"""
         if not await self.ensure_connected():
             raise RuntimeError("Telegram 客户端未初始化，请先设置 api_id/api_hash")
         if phone_code_hash:
