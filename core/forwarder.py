@@ -7,6 +7,7 @@ from telethon.tl.types import Message, PeerUser
 
 from astrbot.api import logger, AstrBotConfig, star
 from ..common.storage import Storage
+from ..common.text_tools import normalize_telegram_channel_name
 from .client import TelegramClientWrapper
 from .downloader import MediaDownloader
 from .senders.telegram import TelegramSender
@@ -79,22 +80,6 @@ class Forwarder:
             self._channel_locks[channel_name] = asyncio.Lock()
         return self._channel_locks[channel_name]
 
-    @staticmethod
-    def _normalize_channel_name(raw: str) -> str:
-        text = (raw or "").strip()
-        if not text:
-            return ""
-        text = text.lstrip("@").strip()
-        lower = text.lower()
-        if lower.startswith("https://t.me/") or lower.startswith("http://t.me/"):
-            text = text.split("://", 1)[1]
-        if text.lower().startswith("t.me/"):
-            text = text.split("/", 1)[1]
-        text = text.split("?", 1)[0].split("#", 1)[0].strip("/")
-        if "/" in text:
-            text = text.split("/", 1)[0]
-        return text.lstrip("@").strip()
-
     def _sync_client_refs(self):
         """保持 Forwarder 内部 client 引用与 wrapper 最新 client 一致。"""
         latest = self.client_wrapper.client
@@ -144,9 +129,9 @@ class Forwarder:
 
     def _get_channel_raw_cfg(self, channel_name: str) -> dict:
         channels_config = self.config.get("source_channels", [])
-        channel_name_norm = self._normalize_channel_name(channel_name)
+        channel_name_norm = normalize_telegram_channel_name(channel_name)
         for cfg in channels_config:
-            if self._normalize_channel_name(cfg.get("channel_username", "")) == channel_name_norm:
+            if normalize_telegram_channel_name(cfg.get("channel_username", "")) == channel_name_norm:
                 return cfg
         return {}
 
@@ -386,7 +371,7 @@ class Forwarder:
 
         async def fetch_one(cfg):
             try:
-                channel_name = self._normalize_channel_name(cfg.get("channel_username", ""))
+                channel_name = normalize_telegram_channel_name(cfg.get("channel_username", ""))
                 if not channel_name:
                     return []
                 

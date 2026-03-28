@@ -14,6 +14,7 @@ from telethon.errors import (
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 from astrbot.api import AstrBotConfig, logger
+from ..common.text_tools import normalize_telegram_channel_name
 
 
 class PluginCommands:
@@ -27,11 +28,11 @@ class PluginCommands:
 
     def _find_channel_cfg(self, channel_name: str) -> Optional[dict]:
         """根据频道名（忽略大小写）查找对应的配置项，并返回原始配置"""
-        channel_name = self._normalize_channel_name(channel_name)
+        channel_name = normalize_telegram_channel_name(channel_name)
         channels = self.config.get("source_channels", [])
         for cfg in channels:
             if isinstance(cfg, dict):
-                stored_name = self._normalize_channel_name(cfg.get("channel_username", ""))
+                stored_name = normalize_telegram_channel_name(cfg.get("channel_username", ""))
                 if stored_name.lower() == channel_name.lower():
                     return cfg
         return None
@@ -53,25 +54,6 @@ class PluginCommands:
             else:
                 targets.append(val)
         return targets
-
-    @staticmethod
-    def _normalize_channel_name(raw: str) -> str:
-        text = (raw or "").strip()
-        if not text:
-            return ""
-
-        text = text.lstrip("@").strip()
-        lower = text.lower()
-
-        if lower.startswith("https://t.me/") or lower.startswith("http://t.me/"):
-            text = text.split("://", 1)[1]
-        if text.lower().startswith("t.me/"):
-            text = text.split("/", 1)[1]
-
-        text = text.split("?", 1)[0].split("#", 1)[0].strip("/")
-        if "/" in text:
-            text = text.split("/", 1)[0]
-        return text.lstrip("@").strip()
 
     def _get_root_qq_targets(self):
         return self.config.get("target_qq_session", [])
@@ -112,7 +94,7 @@ class PluginCommands:
 
     @staticmethod
     def _normalize_phone(phone: str) -> str:
-        # 鍏佽鐢ㄦ埛杈撳叆鍚┖鏍?鐭í绾跨殑鎵嬫満鍙凤紝鎻愪氦鍓嶇粺涓€娓呮礂
+        # 允许用户输入含空格-短横线的手机号，提交前统一清洗
         return (phone or "").replace(" ", "").replace("-", "").strip()
 
     async def handle_login(self, event: AstrMessageEvent, args: str = ""):
@@ -325,7 +307,7 @@ class PluginCommands:
             wrapper.clear_cache(session_path)
 
             # 删除磁盘上的 session 相关文件（如果存在）
-            for suffix in (".session", ".session-journal"):
+            for suffix in (".session", ".session-journal", ".session-shm", ".session-wal"):
                 p = f"{session_path}{suffix}"
                 if os.path.exists(p):
                     try:
