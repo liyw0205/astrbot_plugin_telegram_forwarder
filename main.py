@@ -280,6 +280,22 @@ async def set_config(self, event: AstrMessageEvent, args: str = ""):
     async for result in self.command_handler.set_config(event, parts):
         yield result
 
+
+@tg.command("login")
+async def login(self, event: AstrMessageEvent, args: str = ""):
+    """通过 bot 执行 Telegram 登录流程"""
+    full_text = event.message_str.strip()
+    prefix_variants = ["/tg login", "tg login"]
+    cmd_text = full_text
+    for p in prefix_variants:
+        if full_text.lower().startswith(p):
+            cmd_text = full_text[len(p):].strip()
+            break
+
+    async for result in self.command_handler.handle_login(event, cmd_text):
+        yield result
+
+
 @tg.command("help")
 async def show_help(self, event: AstrMessageEvent):
     """显示插件命令帮助"""

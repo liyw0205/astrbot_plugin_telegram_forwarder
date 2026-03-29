@@ -1,6 +1,25 @@
 import re
 
 
+def normalize_telegram_channel_name(raw: str) -> str:
+    """Normalize channel usernames or t.me links into plain channel name."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+
+    text = text.lstrip("@").strip()
+    lower = text.lower()
+    if lower.startswith("https://t.me/") or lower.startswith("http://t.me/"):
+        text = text.split("://", 1)[1]
+    if text.lower().startswith("t.me/"):
+        text = text.split("/", 1)[1]
+
+    text = text.split("?", 1)[0].split("#", 1)[0].strip("/")
+    if "/" in text:
+        text = text.split("/", 1)[0]
+    return text.lstrip("@").strip()
+
+
 def clean_telegram_text(text: str, strip_links: bool = False) -> str:
     """清洗 Telegram 消息文本"""
     if not text:

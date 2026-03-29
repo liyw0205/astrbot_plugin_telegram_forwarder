@@ -7,6 +7,7 @@ from telethon.tl.types import Message, PeerUser
 
 from astrbot.api import logger, AstrBotConfig, star
 from ..common.storage import Storage
+from ..common.text_tools import normalize_telegram_channel_name
 from .client import TelegramClientWrapper
 from .downloader import MediaDownloader
 from .senders.telegram import TelegramSender
@@ -79,6 +80,31 @@ class Forwarder:
             self._channel_locks[channel_name] = asyncio.Lock()
         return self._channel_locks[channel_name]
 
+    def _sync_client_refs(self):
+        """保持 Forwarder 内部 client 引用与 wrapper 最新 client 一致。"""
+        latest = self.client_wrapper.client
+        if not latest:
+            return
+        if self.client is latest:
+            return
+        self.client = latest
+        self.downloader.client = latest
+        self.tg_sender.client = latest
+
+    async def _ensure_client_ready(self) -> bool:
+        """确保 client 可用且已连接。"""
+        self._sync_client_refs()
+        if not self.client_wrapper or not self.client_wrapper.client:
+            return False
+        try:
+            ok = await self.client_wrapper.ensure_connected()
+            if ok:
+                self._sync_client_refs()
+            return ok
+        except Exception as e:
+            logger.error(f"[Forwarder] reconnect failed: {e}")
+            return False
+
     async def _get_display_name(self, channel_name: str) -> str:
         """获取频道显示名称"""
         forward_cfg = self.config.get("forward_config", {})
@@ -103,8 +129,9 @@ class Forwarder:
 
     def _get_channel_raw_cfg(self, channel_name: str) -> dict:
         channels_config = self.config.get("source_channels", [])
+        channel_name_norm = normalize_telegram_channel_name(channel_name)
         for cfg in channels_config:
-            if cfg.get("channel_username") == channel_name:
+            if normalize_telegram_channel_name(cfg.get("channel_username", "")) == channel_name_norm:
                 return cfg
         return {}
 
@@ -332,7 +359,7 @@ class Forwarder:
         if self._stopping:
             return
 
-        if not self.client_wrapper.is_connected():
+        if not await self._ensure_client_ready():
             return
 
         if self._is_curfew():
@@ -344,7 +371,7 @@ class Forwarder:
 
         async def fetch_one(cfg):
             try:
-                channel_name = cfg.get("channel_username", "")
+                channel_name = normalize_telegram_channel_name(cfg.get("channel_username", ""))
                 if not channel_name:
                     return []
                 
@@ -954,7 +981,7 @@ class Forwarder:
         self._stopping = True
 
     async def _fetch_channel_messages(
-        self, channel_name: str, start_date: Optional[datetime], msg_limit: int = 20
+        self, channel_name: str, start_date: Optional[datetime], msg_limit: int = 20, _retried: bool = False
     ) -> List[Message]:
         """
         从单个频道获取新消息
@@ -966,6 +993,10 @@ class Forwarder:
         logger.debug(f"[Fetch] 频道: {channel_name} | 记录的最新 ID (last_id): {last_id}")
 
         try:
+            if not await self._ensure_client_ready():
+                logger.error(f"[Fetch] {channel_name}: client is not connected")
+                return []
+
             effective_cfg = self._get_effective_config(channel_name)
             enable_dedup = effective_cfg.get("enable_deduplication", True)
 
@@ -1033,6 +1064,10 @@ class Forwarder:
 
         except Exception as e:
             error_msg = str(e)
+            if (not _retried) and "Cannot send requests while disconnected" in error_msg:
+                logger.warning(f"[Fetch] {channel_name}: disconnected, reconnect and retry once")
+                if await self._ensure_client_ready():
+                    return await self._fetch_channel_messages(channel_name, start_date, msg_limit, _retried=True)
             if "database disk image is malformed" in error_msg:
                 logger.error(f"[Fetch] Telethon 数据库文件损坏 (malformed)。建议重载插件。")
             logger.error(f"[Fetch] {channel_name}: 访问失败 - {e}")
