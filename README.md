@@ -72,7 +72,7 @@
 * **api_id** / **api_hash**: **(必填)** Telegram API 凭证 (需从 [my.telegram.org](https://my.telegram.org) 获取)。
 * **proxy**: 代理地址，例如 `http://127.0.0.1:7890`。
 * **telegram_session**: 
-  - **(推荐)** 您可使用`\tg login`命令登录 Telegram 账号，登录成功后会自动生成会话文件并保存到数据目录，无需手动配置此项。
+- **(推荐)** 您可使用`/tg login`命令登录 Telegram 账号，登录成功后会自动生成会话文件并保存到数据目录，无需手动配置此项。
   - 也可在本地使用 `relogin.py` 生成 `.session` 文件并在此处上传，以绕过 Docker 环境下的验证码输入问题。
 
 ### 2. 获取登录 Session
