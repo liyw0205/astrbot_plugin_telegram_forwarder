@@ -66,12 +66,20 @@
 ## ⚙️ 配置说明
 
 ### 1. 账号连接
-* **phone**: **(必填)** 您的 Telegram 登录手机号 (国际格式，如 `+86138...`)。
+* **phone**: 您的 Telegram 登录手机号 (国际格式，如 `+86138...`)。
+  - **(推荐)** 如使用`\tg login`命令登录则无需填写。
+  - 如使用 `relogin.py` 生成会话文件，则此项必填。
 * **api_id** / **api_hash**: **(必填)** Telegram API 凭证 (需从 [my.telegram.org](https://my.telegram.org) 获取)。
 * **proxy**: 代理地址，例如 `http://127.0.0.1:7890`。
-* **telegram_session**: **(推荐)** 您可以在本地使用 `relogin.py` 生成 `.session` 文件并在此处上传，以绕过 Docker 环境下的验证码输入问题。
+* **telegram_session**: 
+  - **(推荐)** 您可使用`\tg login`命令登录 Telegram 账号，登录成功后会自动生成会话文件并保存到数据目录，无需手动配置此项。
+  - 也可在本地使用 `relogin.py` 生成 `.session` 文件并在此处上传，以绕过 Docker 环境下的验证码输入问题。
 
 ### 2. 获取登录 Session
+#### 1）使用内置登录命令（推荐）
+1. 发送 `/tg login start <手机号>` 命令，随后后会收到 Telegram 验证码。
+2. 发送 `/tg login code <验证码>` 命令，根据提示输入验证码（验证码每位都要加一,如接收到验证码`25691`则输入`36702`），完成登录流程。
+#### 2）使用本地工具生成 Session
 由于 Docker/后台环境无法直接输入验证码，或因服务器网络环境触发人机验证（Cloudflare 等）导致登录失败，请按以下步骤在本地环境中生成会话文件：
 1. 进入插件目录：`cd data/plugins/astrbot_plugin_telegram_forwarder`
 2. 运行登录工具：`python relogin.py` (请确保已安装依赖)
