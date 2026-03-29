@@ -34,28 +34,7 @@
 
 ## 🚀 效果预览
 
-```text
-/tg add <频道>                         添加监控频道（支持 @name / t.me 链接）
-/tg rm <频道>                          移除监控频道
-/tg ls                                 列出监控频道
-/tg check                              立即触发一次抓取与发送
-/tg status                             查看插件状态
-/tg pause                              暂停抓取与发送
-/tg resume                             恢复抓取与发送
-/tg queue                              查看待发送队列
-/tg clearqueue [频道|all]              清空待发送队列
-/tg get [global|root|频道]             查看配置
-/tg set <目标> <字段> <值>              修改配置
-/tg help                               显示帮助
-
-# 登录相关
-/tg login start [手机号]                开始登录（发送验证码）
-/tg login code <验证码>                 提交验证码
-/tg login password <两步验证密码>       提交 2FA 密码
-/tg login status                       查看登录流程状态
-/tg login cancel                       取消当前登录流程
-/tg login reset                        重置当前登录状态并重建客户端
-```
+![Preview](resources/img/preview.png)
 
 ---
 
@@ -75,18 +54,32 @@
 /tg clearqueue [频道|all]  清空队列
 /tg get [global|频道] 查看配置
 /tg set <目标> <字段> <值>  修改配置
+/tg login start [手机号]                开始登录（发送验证码）
+/tg login code <验证码>                 提交验证码
+/tg login password <两步验证密码>       提交 2FA 密码
+/tg login status                       查看登录流程状态
+/tg login cancel                       取消当前登录流程
+/tg login reset                        重置当前登录状态并重建客户端
 /tg help             显示此帮助
 ```
 
 ## ⚙️ 配置说明
 
 ### 1. 账号连接
-* **phone**: **(必填)** 您的 Telegram 登录手机号 (国际格式，如 `+86138...`)。
+* **phone**: 您的 Telegram 登录手机号 (国际格式，如 `+86138...`)。
+  - **(推荐)** 如使用`/tg login`命令登录则无需填写。
+  - 如使用 `relogin.py` 生成会话文件，则此项必填。
 * **api_id** / **api_hash**: **(必填)** Telegram API 凭证 (需从 [my.telegram.org](https://my.telegram.org) 获取)。
 * **proxy**: 代理地址，例如 `http://127.0.0.1:7890`。
-* **telegram_session**: **(推荐)** 您可以在本地使用 `relogin.py` 生成 `.session` 文件并在此处上传，以绕过 Docker 环境下的验证码输入问题。
+* **telegram_session**: 
+  - **(推荐)** 您可使用`/tg login`命令登录 Telegram 账号，登录成功后会自动生成会话文件并保存到数据目录，无需手动配置此项。
+  - 也可在本地使用 `relogin.py` 生成 `.session` 文件并在此处上传，以绕过 Docker 环境下的验证码输入问题。
 
 ### 2. 获取登录 Session
+#### 1）使用内置登录命令（推荐）
+1. 发送 `/tg login start <手机号>` 命令，随后后会收到 Telegram 验证码。
+2. 发送 `/tg login code <验证码>` 命令，根据提示输入验证码（为了增强安全性，请将收到的验证码每位数字加一后输入，如接收到验证码`25691`则输入`36702`），完成登录流程。
+#### 2）使用本地工具生成 Session
 由于 Docker/后台环境无法直接输入验证码，或因服务器网络环境触发人机验证（Cloudflare 等）导致登录失败，请按以下步骤在本地环境中生成会话文件：
 1. 进入插件目录：`cd data/plugins/astrbot_plugin_telegram_forwarder`
 2. 运行登录工具：`python relogin.py` (请确保已安装依赖)
