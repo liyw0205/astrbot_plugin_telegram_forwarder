@@ -67,7 +67,7 @@
 
 ### 1. 账号连接
 * **phone**: 您的 Telegram 登录手机号 (国际格式，如 `+86138...`)。
-  - **(推荐)** 如使用`\tg login`命令登录则无需填写。
+- **(推荐)** 如使用`/tg login`命令登录则无需填写。
   - 如使用 `relogin.py` 生成会话文件，则此项必填。
 * **api_id** / **api_hash**: **(必填)** Telegram API 凭证 (需从 [my.telegram.org](https://my.telegram.org) 获取)。
 * **proxy**: 代理地址，例如 `http://127.0.0.1:7890`。
