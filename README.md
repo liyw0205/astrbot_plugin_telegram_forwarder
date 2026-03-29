@@ -34,28 +34,7 @@
 
 ## 🚀 效果预览
 
-```text
-/tg add <频道>                         添加监控频道（支持 @name / t.me 链接）
-/tg rm <频道>                          移除监控频道
-/tg ls                                 列出监控频道
-/tg check                              立即触发一次抓取与发送
-/tg status                             查看插件状态
-/tg pause                              暂停抓取与发送
-/tg resume                             恢复抓取与发送
-/tg queue                              查看待发送队列
-/tg clearqueue [频道|all]              清空待发送队列
-/tg get [global|root|频道]             查看配置
-/tg set <目标> <字段> <值>              修改配置
-/tg help                               显示帮助
-
-# 登录相关
-/tg login start [手机号]                开始登录（发送验证码）
-/tg login code <验证码>                 提交验证码
-/tg login password <两步验证密码>       提交 2FA 密码
-/tg login status                       查看登录流程状态
-/tg login cancel                       取消当前登录流程
-/tg login reset                        重置当前登录状态并重建客户端
-```
+![Preview](resources/img/preview.png)
 
 ---
 
@@ -75,6 +54,12 @@
 /tg clearqueue [频道|all]  清空队列
 /tg get [global|频道] 查看配置
 /tg set <目标> <字段> <值>  修改配置
+/tg login start [手机号]                开始登录（发送验证码）
+/tg login code <验证码>                 提交验证码
+/tg login password <两步验证密码>       提交 2FA 密码
+/tg login status                       查看登录流程状态
+/tg login cancel                       取消当前登录流程
+/tg login reset                        重置当前登录状态并重建客户端
 /tg help             显示此帮助
 ```
 
