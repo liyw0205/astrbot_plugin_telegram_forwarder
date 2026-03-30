@@ -5,6 +5,10 @@ from telethon.tl.types import Message
 from astrbot.api import logger, AstrBotConfig, star
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import Plain, Image, Record, Video, Node, Nodes, File
+try:
+    from astrbot.core.utils.path_util import path_Mapping
+except ImportError:
+    path_Mapping = None
 
 from ...common.text_tools import clean_telegram_text
 from ..downloader import MediaDownloader
@@ -50,6 +54,20 @@ class QQSender:
         if group_id not in self._group_locks:
             self._group_locks[group_id] = asyncio.Lock()
         return self._group_locks[group_id]
+
+    def _map_path(self, fpath: str) -> str:
+        """映射文件路径（用于跨 Docker 容器文件访问）"""
+        try:
+            if path_Mapping is None:
+                return fpath
+            core_config = getattr(self.context, '_config', None)
+            if core_config:
+                mappings = core_config.get('platform_settings', {}).get('path_mapping', [])
+                if mappings:
+                    return path_Mapping(mappings, fpath)
+        except Exception:
+            pass
+        return fpath
 
     async def initialize_runtime(self):
         """Best-effort bootstrap for platform_id/bot before first forward."""
@@ -210,7 +228,7 @@ class QQSender:
 
         if not qq_targets or not batches:
             return
-    
+
         if isinstance(qq_targets, int):
             qq_targets = [qq_targets]
         elif not isinstance(qq_targets, list):
@@ -326,7 +344,13 @@ class QQSender:
                             elif ext == ".wav":
                                 media_components.append(Record.fromFileSystem(fpath))
                             elif ext == ".mp4":
-                                media_components.append(Video.fromFileSystem(fpath))
+                                # Video 在合并转发中由 NapCat 直接读取文件，
+                                # 跨 Docker 环境需要映射为容器可访问的路径
+                                mapped = self._map_path(fpath)
+                                if mapped != fpath:
+                                    media_components.append(Video(file=f"file:///{mapped}"))
+                                else:
+                                    media_components.append(Video.fromFileSystem(fpath))
                             else:
                                 media_components.append(File(file=fpath, name=os.path.basename(fpath)))
     
@@ -355,9 +379,18 @@ class QQSender:
                         if not should_exclude_text:
                             for t in text_parts:
                                 current_node_components.append(Plain(t + "\n"))
-    
+
+                        # 文字 + 特殊媒体(Video/Record/File)时拆分为独立 Node，
+                        # 与单条消息路径的 special_types 拆分逻辑对齐 (issue#16)
+                        # 注意：Image 不拆分（原设计：From header 在外层显示，内层只渲染图片）
+                        _node_special_media = [c for c in media_components if isinstance(c, (Video, Record, File))]
+                        if not should_exclude_text and text_parts and _node_special_media:
+                            if current_node_components:
+                                all_nodes_data.append(current_node_components)
+                            current_node_components = []
+
                         current_node_components.extend(media_components)
-    
+
                         if current_node_components:
                             # 避免生成只有 header 的空节点
                             is_only_header = (
@@ -380,7 +413,7 @@ class QQSender:
             use_big_merge = (qq_merge_threshold > 1) and (len(processed_batches) >= qq_merge_threshold)
             if use_big_merge and not is_mixed_big_merge:
                 logger.info(f"[QQSender] 本次 {len(processed_batches)} 个逻辑单元 >= 阈值 {qq_merge_threshold}，转为整组合并转发")
-    
+
             # 发送到各个目标群组
             for target_session in context_target_sessions:
                 if not target_session:

@@ -502,7 +502,7 @@ class Forwarder:
 
             all_pending = self.storage.get_all_pending()
             queue_size = len(all_pending) if all_pending else 0
-            
+
             if not all_pending:
                 logger.debug("[Send] 正在检测待发送队列... 队列为空，无需处理。")
                 return
@@ -652,6 +652,11 @@ class Forwarder:
                 skipped_grouped_ids = set() # (channel, grouped_id)
                 individually_skipped_ids = set()
 
+                # 发送周期 re-fetch 前确保 Telegram 客户端可用
+                if not await self._ensure_client_ready():
+                    logger.warning("[Send] Telegram 客户端不可用，跳过本轮 re-fetch，保留队列。")
+                    break
+
                 for channel, ids in channel_to_ids.items():
                     try:
                         effective_cfg = self._get_effective_config(channel)
@@ -763,14 +768,24 @@ class Forwarder:
 
             if not final_batches:
                 if all_processed_meta:
-                    chan_to_ids_processed = {}
-                    for item in all_processed_meta:
-                        c = item["channel"]
-                        if c not in chan_to_ids_processed: chan_to_ids_processed[c] = []
-                        chan_to_ids_processed[c].append(item["id"])
-                    for channel, ids in chan_to_ids_processed.items():
-                        self.storage.remove_ids_from_pending(channel, ids)
-                    logger.info(f"[Send] 本批次尝试的所有消息 ({len(all_processed_meta)} 条) 均被过滤或获取失败，已从队列移除。")
+                    # 只移除成功拉取到的消息（可能被过滤），未拉取到的保留重试
+                    fetched_ids = {m.id for _, m in raw_fetched_messages}
+                    removable_ids = [item["id"] for item in all_processed_meta if item["id"] in fetched_ids]
+                    retained_ids = [item["id"] for item in all_processed_meta if item["id"] not in fetched_ids]
+                    if removable_ids:
+                        chan_to_ids_processed = {}
+                        for item in all_processed_meta:
+                            if item["id"] in fetched_ids:
+                                c = item["channel"]
+                                if c not in chan_to_ids_processed: chan_to_ids_processed[c] = []
+                                chan_to_ids_processed[c].append(item["id"])
+                        for channel, ids in chan_to_ids_processed.items():
+                            self.storage.remove_ids_from_pending(channel, ids)
+                    logger.info(
+                        f"[Send] 本批次 {len(all_processed_meta)} 条消息均未进入发送队列: "
+                        f"过滤移除 {len(removable_ids)} 条"
+                        f"{f'，保留重试 {len(retained_ids)} 条' if retained_ids else ''}"
+                    )
                 return
 
             actual_sent_count = 0
