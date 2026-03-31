@@ -26,9 +26,9 @@ class QQSender:
         self.bot = None         # 动态捕获的 bot 实例
         self.node_name = None   # 合并转发消息时显示的 bot 昵称
 
-    async def _ensure_node_name(self, bot):
+    async def _ensure_node_name(self, bot, cache_fallback: bool = False):
         """获取 bot 昵称"""
-        if self.node_name:
+        if self.node_name and self.node_name != "AstrBot":
             return self.node_name
         
         try:
@@ -42,7 +42,7 @@ class QQSender:
         except Exception as e:
             logger.debug(f"[QQSender] 获取 bot 昵称异常: {e}")
             
-        if not self.node_name:
+        if cache_fallback and not self.node_name:
             self.node_name = "AstrBot"
         return self.node_name
 
@@ -175,8 +175,8 @@ class QQSender:
         except Exception as e:
             logger.debug(f"[QQSender] Bootstrap bot from platform failed: {e}")
 
-        if self.bot and not self.node_name:
-            await self._ensure_node_name(self.bot)
+        if self.bot:
+            await self._ensure_node_name(self.bot, cache_fallback=False)
 
     async def send(
         self,
@@ -271,7 +271,7 @@ class QQSender:
                 self.bot = bot
     
             self_id = 0
-            node_name = await self._ensure_node_name(bot) if bot else "AstrBot"
+            node_name = await self._ensure_node_name(bot, cache_fallback=True) if bot else "AstrBot"
             if bot:
                 try:
                     info = await bot.get_login_info()
