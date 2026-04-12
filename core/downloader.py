@@ -26,6 +26,17 @@ class MediaDownloader:
         if not msg.media:
             return local_files
 
+        # 跳过动画贴纸 (.tgs) 和自定义动图表情 — QQ 无法显示
+        _skip_attr_names = {
+            "DocumentAttributeAnimated",
+            "DocumentAttributeCustomEmoji",
+        }
+        if msg.sticker or (hasattr(msg.media, "document") and
+                any(getattr(a, "type", None) == "animated" or
+                    type(a).__name__ in _skip_attr_names
+                    for a in getattr(getattr(msg.media, "document", None), "attributes", []))):
+            return local_files
+
         # 检查大小限制 (图片除外)
         is_photo = bool(msg.photo)
         if not is_photo and max_size_mb > 0:

@@ -383,30 +383,38 @@ class QQSender:
                             all_local_files.append(fpath)
                             has_any_attachment = True
                             ext = os.path.splitext(fpath)[1].lower()
-                            if ext in [
+                            if ext in (
                                 ".jpg",
                                 ".jpeg",
                                 ".png",
                                 ".webp",
                                 ".gif",
                                 ".bmp",
-                            ]:
+                            ):
                                 media_components.append(Image.fromFileSystem(fpath))
-                            elif ext == ".wav":
+                            elif ext in (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"):
+                                # Record — AstrBot 读取文件并上传，无需路径映射
                                 media_components.append(Record.fromFileSystem(fpath))
-                            elif ext == ".mp4":
-                                # Video 在合并转发中由 NapCat 直接读取文件，
-                                # 跨 Docker 环境需要映射为容器可访问的路径
+                            elif ext in (".mp4", ".mkv", ".mov", ".webm", ".avi"):
+                                # Video — NapCat 直接读取文件，跨 Docker 需要路径映射
                                 mapped = self._map_path(fpath)
                                 if mapped != fpath:
-                                    media_components.append(
-                                        Video(file=f"file:///{mapped}")
-                                    )
+                                    media_components.append(Video(file=f"file:///{mapped}"))
                                 else:
                                     media_components.append(Video.fromFileSystem(fpath))
                             else:
+                                # 其他格式作为文件发送
+                                logger.debug(
+                                    f"[QQSender] 未知媒体类型 {ext}，尝试以 File 发送: {fpath}"
+                                )
+                                mapped = self._map_path(fpath)
                                 media_components.append(
-                                    File(file=fpath, name=os.path.basename(fpath))
+                                    File(
+                                        file=f"file:///{mapped}"
+                                        if mapped != fpath
+                                        else fpath,
+                                        name=os.path.basename(fpath),
+                                    )
                                 )
 
                         should_exclude_text = (
@@ -498,30 +506,90 @@ class QQSender:
 
                     if use_big_merge or is_mixed_big_merge:
                         # ─── 大合并（包括混合模式） ───
-                        all_sub_nodes_data = []
-                        for batch_data in processed_batches:
-                            all_sub_nodes_data.extend(batch_data["nodes_data"])
+                        # 按批次边界拆块，避免同一组图片/album 被拆到不同块
+                        chunk_size = forward_cfg.get("qq_merge_chunk_size", 5)
+                        chunk_delay = forward_cfg.get("qq_merge_chunk_delay", 3)
 
-                        if all_sub_nodes_data:
+                        batch_chunks: List[List[dict]] = []
+                        current_chunk_batches: List[dict] = []
+                        current_chunk_nodes = 0
+                        for batch_data in processed_batches:
+                            batch_node_count = len(batch_data["nodes_data"])
+                            # 如果加入当前批次会超限，且当前块非空，则开新块
+                            if current_chunk_nodes + batch_node_count > chunk_size and current_chunk_batches:
+                                batch_chunks.append(current_chunk_batches)
+                                current_chunk_batches = []
+                                current_chunk_nodes = 0
+                            current_chunk_batches.append(batch_data)
+                            current_chunk_nodes += batch_node_count
+                        if current_chunk_batches:
+                            batch_chunks.append(current_chunk_batches)
+
+                        total_chunks = len(batch_chunks)
+                        consecutive_failures = 0
+                        for chunk_idx, chunk_batches in enumerate(batch_chunks, 1):
+                            # 收集本块所有节点（保持批次边界）
+                            chunk_nodes = []
+                            for bd in chunk_batches:
+                                chunk_nodes.extend(bd["nodes_data"])
                             try:
-                                nodes_list = [
-                                    Node(uin=self_id, name=node_name, content=nc)
-                                    for nc in all_sub_nodes_data
-                                ]
-                                message_chain = MessageChain()
-                                message_chain.chain.append(Nodes(nodes_list))
-                                await self.context.send_message(
-                                    unified_msg_origin, message_chain
-                                )
+                                if len(chunk_nodes) > 1:
+                                    nodes_list = [
+                                        Node(uin=self_id, name=node_name, content=nc)
+                                        for nc in chunk_nodes
+                                    ]
+                                    message_chain = MessageChain()
+                                    message_chain.chain.append(Nodes(nodes_list))
+                                    await self.context.send_message(
+                                        unified_msg_origin, message_chain
+                                    )
+                                else:
+                                    components = chunk_nodes[0]
+                                    message_chain = MessageChain()
+                                    message_chain.chain.extend(components)
+                                    await self.context.send_message(
+                                        unified_msg_origin, message_chain
+                                    )
+                                consecutive_failures = 0
                                 logger.info(
                                     f"[QQSender] {node_name} -> {target_session}: "
                                     f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
-                                    f"({len(all_sub_nodes_data)} 子节点 / {len(processed_batches)} 逻辑单元)"
+                                    f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
                                 )
+                                if chunk_idx < total_chunks:
+                                    await asyncio.sleep(chunk_delay)
                             except Exception as e:
-                                logger.error(
-                                    f"[QQSender] 大合并转发到 {target_session} 失败: {e}"
+                                consecutive_failures += 1
+                                logger.warning(
+                                    f"[QQSender] 大合并转发到 {target_session} 失败 "
+                                    f"(块 {chunk_idx}): {e}，降级为逐条发送"
                                 )
+                                fallback_ok = 0
+                                for nc in chunk_nodes:
+                                    try:
+                                        mc = MessageChain()
+                                        mc.chain.extend(nc)
+                                        await self.context.send_message(unified_msg_origin, mc)
+                                        fallback_ok += 1
+                                        await asyncio.sleep(2)
+                                    except Exception as e2:
+                                        logger.error(f"[QQSender] 降级单条发送也失败: {e2}")
+                                        break
+                                if fallback_ok:
+                                    logger.info(
+                                        f"[QQSender] 降级发送完成: {fallback_ok}/{len(chunk_nodes)} 条"
+                                    )
+                                if consecutive_failures >= 3:
+                                    remaining = sum(
+                                        len(bd["nodes_data"])
+                                        for bd in batch_chunks[chunk_idx:]
+                                    )
+                                    logger.warning(
+                                        f"[QQSender] 连续 {consecutive_failures} 块失败，"
+                                        f"停止本目标剩余 {remaining} 个节点"
+                                    )
+                                    break
+                                await asyncio.sleep(5)
                     else:
                         # 普通发送（逐个小相册 / 单条）
                         for batch_data in processed_batches:
