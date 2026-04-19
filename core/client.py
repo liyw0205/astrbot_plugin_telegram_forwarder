@@ -1,10 +1,15 @@
-from telethon import TelegramClient
-import sys
-import socks
-from astrbot.api import logger, AstrBotConfig
 import asyncio
 import os
+import shutil
+import sqlite3
+import sys
 from urllib.parse import urlparse
+
+import socks
+from telethon import TelegramClient
+
+from astrbot.api import AstrBotConfig, logger
+
 
 # ========== 全局客户端缓存 ==========
 # 避免插件重载时重新连接和授权，大幅提升配置保存速度
@@ -45,6 +50,60 @@ class TelegramClientWrapper:
 
     def _session_path(self) -> str:
         return os.path.join(self.plugin_data_dir, "user_session")
+
+    @staticmethod
+    def _ensure_compatible_session_schema(session_path: str) -> None:
+        session_file = f"{session_path}.session"
+        if not os.path.exists(session_file):
+            return
+
+        conn = sqlite3.connect(session_file)
+        try:
+            columns = conn.execute("PRAGMA table_info(sessions)").fetchall()
+            column_names = [column[1] for column in columns]
+            if "tmp_auth_key" not in column_names:
+                return
+
+            rows = conn.execute(
+                "SELECT dc_id, server_address, port, auth_key, takeout_id FROM sessions"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        backup_file = f"{session_file}.bak"
+        if not os.path.exists(backup_file):
+            shutil.copy2(session_file, backup_file)
+
+        conn = sqlite3.connect(session_file)
+        try:
+            conn.execute("ALTER TABLE sessions RENAME TO sessions_legacy")
+            conn.execute(
+                """
+                CREATE TABLE sessions (
+                    dc_id integer primary key,
+                    server_address text,
+                    port integer,
+                    auth_key blob,
+                    takeout_id integer
+                )
+                """
+            )
+            conn.executemany(
+                """
+                INSERT INTO sessions
+                (dc_id, server_address, port, auth_key, takeout_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.execute("DROP TABLE sessions_legacy")
+            conn.commit()
+        except Exception:
+            conn.close()
+            shutil.copy2(backup_file, session_file)
+            raise
+        else:
+            conn.close()
 
     async def ensure_connected(self) -> bool:
         if not self.client:
@@ -129,10 +188,11 @@ class TelegramClientWrapper:
             # 会话文件路径：存储登录状态和缓存
             # 使用 .session 扩展名，Telethon 会自动添加
             session_path = self._session_path()
+            self._ensure_compatible_session_schema(session_path)
 
             # ========== 检查缓存 ==========
             cache = get_client_cache()
-            
+
             # 尝试从缓存中获取已连接的客户端
             if session_path in cache:
                 cached_client = cache[session_path]
@@ -274,6 +334,16 @@ class TelegramClientWrapper:
         return getattr(self, "_authorized", False) and self.is_connected()
 
     @staticmethod
+    def _close_client_session(client) -> None:
+        """同步关闭 Telethon client 的 SQLite session，释放文件锁。"""
+        try:
+            session = getattr(client, "session", None)
+            if session and callable(getattr(session, "close", None)):
+                session.close()
+        except Exception as e:
+            logger.debug(f"[Client Cache] 关闭 session 时异常（通常不影响下次启动）: {e}")
+
+    @staticmethod
     def clear_cache(session_path=None):
         """清理客户端缓存和授权状态缓存"""
         cache = get_client_cache()
@@ -282,10 +352,13 @@ class TelegramClientWrapper:
         if session_path:
             if session_path in cache:
                 logger.debug(f"[Client Cache] 清理会话缓存: {session_path}")
+                TelegramClientWrapper._close_client_session(cache[session_path])
                 del cache[session_path]
             if session_path in auth_cache:
                 del auth_cache[session_path]
         else:
+            for sp, client in cache.items():
+                TelegramClientWrapper._close_client_session(client)
             client_count = len(cache)
             logger.debug(f"[Client Cache] 清理所有缓存 ({client_count} 个会话)")
             cache.clear()
@@ -307,4 +380,6 @@ class TelegramClientWrapper:
         except Exception as e:
             logger.debug(f"[Client Cache] 断开缓存客户端失败 {session_path}: {e}")
         finally:
+            if cached_client:
+                TelegramClientWrapper._close_client_session(cached_client)
             TelegramClientWrapper.clear_cache(session_path)

@@ -19,7 +19,11 @@ try:
 except ImportError:
     path_Mapping = None
 
-from ...common.text_tools import clean_telegram_text, is_numeric_channel_id
+from ...common.text_tools import (
+    clean_telegram_text,
+    is_numeric_channel_id,
+    to_telethon_entity,
+)
 from ..downloader import MediaDownloader
 
 
@@ -79,6 +83,249 @@ class QQSender:
         except Exception:
             pass
         return fpath
+
+    def _dispatch_media_file(self, fpath: str, audio_mode: str = "record"):
+        ext = os.path.splitext(fpath)[1].lower()
+        if ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
+            return [Image.fromFileSystem(fpath)]
+        if ext in (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"):
+            if audio_mode == "file_only":
+                mapped = self._map_path(fpath)
+                return [
+                    File(
+                        file=fpath,
+                        url=mapped if mapped != fpath else "",
+                        name=os.path.basename(fpath),
+                    )
+                ]
+            record = Record.fromFileSystem(fpath)
+            if getattr(record, "path", None) is None:
+                setattr(record, "path", fpath)
+            return [record]
+        if ext in (".mp4", ".mkv", ".mov", ".webm", ".avi"):
+            mapped = self._map_path(fpath)
+            if mapped != fpath:
+                return [Video(file=f"file:///{mapped}")]
+            return [Video.fromFileSystem(fpath)]
+        mapped = self._map_path(fpath)
+        return [
+            File(
+                file=fpath,
+                url=mapped if mapped != fpath else "",
+                name=os.path.basename(fpath),
+            )
+        ]
+
+    @staticmethod
+    def _get_sender_display_name(msg: Message) -> str:
+        post_author = getattr(msg, "post_author", None)
+        if post_author:
+            return str(post_author)
+        sender = getattr(msg, "sender", None)
+        if not sender:
+            return ""
+        for attr in ("first_name", "title", "username"):
+            value = getattr(sender, attr, None)
+            if value:
+                return str(value)
+        return ""
+
+    @staticmethod
+    def _reply_media_label(msg: Message) -> str:
+        if getattr(msg, "photo", None):
+            return "[图片]"
+        if getattr(msg, "video", None):
+            return "[视频]"
+        if getattr(msg, "audio", None) or getattr(msg, "voice", None):
+            return "[音频]"
+        if getattr(msg, "file", None) or getattr(msg, "document", None):
+            return "[文件]"
+        return "[消息]"
+
+    def _build_reply_preview(self, reply_msg: Message, strip_links: bool = False) -> str:
+        sender_name = self._get_sender_display_name(reply_msg)
+        if getattr(reply_msg, "text", None):
+            preview = clean_telegram_text(reply_msg.text, strip_links=strip_links)
+            preview = " ".join(part for part in preview.splitlines() if part).strip()
+            if len(preview) > 100:
+                preview = preview[:100].rstrip() + "..."
+        else:
+            preview = self._reply_media_label(reply_msg)
+        if not preview:
+            preview = self._reply_media_label(reply_msg)
+        if sender_name:
+            return f"↩ 回复 {sender_name}:\n{preview}"
+        return f"↩ 回复:\n{preview}"
+
+    async def _prefetch_reply_previews(
+        self, msgs: List[Message], src_channel: str, strip_links: bool = False
+    ) -> dict[int, str]:
+        existing_ids = {getattr(msg, "id", None) for msg in msgs}
+        reply_ids = []
+        for msg in msgs:
+            reply_header = getattr(msg, "reply_to", None)
+            reply_id = getattr(reply_header, "reply_to_msg_id", None)
+            if not reply_id or reply_id in existing_ids or reply_id in reply_ids:
+                continue
+            reply_ids.append(reply_id)
+        if not reply_ids:
+            return {}
+
+        client = getattr(self.downloader, "client", None)
+        if client is None:
+            return {}
+
+        try:
+            reply_msgs = await client.get_messages(
+                to_telethon_entity(src_channel), ids=reply_ids
+            )
+        except Exception as e:
+            logger.warning(f"[QQSender] 获取 reply 预览失败: {e}")
+            return {}
+
+        preview_cache: dict[int, str] = {}
+        if not reply_msgs:
+            return preview_cache
+
+        if not isinstance(reply_msgs, list):
+            reply_msgs = [reply_msgs]
+
+        for reply_msg in reply_msgs:
+            if not reply_msg or getattr(reply_msg, "id", None) is None:
+                continue
+            preview_cache[reply_msg.id] = self._build_reply_preview(
+                reply_msg, strip_links=strip_links
+            )
+        return preview_cache
+
+    @staticmethod
+    def _batch_contains_audio(nodes_data: List[List[object]]) -> bool:
+        return any(
+            isinstance(component, Record)
+            for node in nodes_data
+            for component in node
+        )
+
+    @staticmethod
+    def _should_merge_batch_nodes(batch_data: dict) -> bool:
+        special_types = (Record, File, Video)
+        has_special_media = any(
+            isinstance(component, special_types)
+            for node in batch_data.get("nodes_data", [])
+            for component in node
+        )
+        return (
+            len(batch_data.get("nodes_data", [])) > 1
+            and not batch_data.get("contains_audio", False)
+            and not has_special_media
+        )
+
+    async def _send_processed_batch(
+        self,
+        batch_data: dict,
+        unified_msg_origin: str,
+        self_id: int,
+        node_name: str,
+        target_session: str,
+    ) -> None:
+        def normalize_file_payload(component: File) -> File:
+            if getattr(component, "file", None):
+                return component
+            compat_file = getattr(component, "file_", None)
+            if compat_file:
+                normalized = File(file=compat_file, name=getattr(component, "name", None))
+                if getattr(component, "file_", None) is not None:
+                    setattr(normalized, "file_", component.file_)
+                return normalized
+            return component
+
+        def log_file_payload(component: File) -> None:
+            logger.info(
+                f"[QQSender] File payload -> {target_session}: "
+                f"file={getattr(component, 'file', None)!r}, "
+                f"file_={getattr(component, 'file_', None)!r}, "
+                f"url={getattr(component, 'url', None)!r}, "
+                f"name={getattr(component, 'name', None)!r}"
+            )
+
+        all_nodes_data = batch_data["nodes_data"]
+        if self._should_merge_batch_nodes(batch_data):
+            message_chain = MessageChain()
+            nodes_list = [
+                Node(uin=self_id, name=node_name, content=nc) for nc in all_nodes_data
+            ]
+            message_chain.chain.append(Nodes(nodes_list))
+            await self.context.send_message(unified_msg_origin, message_chain)
+            logger.info(
+                f"[QQSender] {node_name} -> {target_session}: 相册合并 ({len(all_nodes_data)} 节点)"
+            )
+            return
+
+        components = all_nodes_data[0]
+        if batch_data.get("contains_audio"):
+            for node_components in all_nodes_data:
+                common_components = []
+                for component in node_components:
+                    if isinstance(component, Record):
+                        chain = MessageChain([component])
+                        await self.context.send_message(unified_msg_origin, chain)
+                        path = getattr(component, "path", None)
+                        if path:
+                            mapped = self._map_path(path)
+                            file_component = File(
+                                file=path,
+                                url=mapped if mapped != path else "",
+                                name=os.path.basename(path),
+                            )
+                            log_file_payload(file_component)
+                            file_chain = MessageChain([file_component])
+                            await self.context.send_message(unified_msg_origin, file_chain)
+                    else:
+                        if isinstance(component, File):
+                            component = normalize_file_payload(component)
+                        common_components.append(component)
+                if common_components:
+                    chain = MessageChain()
+                    chain.chain.extend(common_components)
+                    await self.context.send_message(unified_msg_origin, chain)
+            logger.info(
+                f"[QQSender] {node_name} -> {target_session}: 单条消息 (音频已拆分补文件)"
+            )
+            return
+
+        special_types = (Record, File, Video)
+        batch_has_special = False
+        for node_components in all_nodes_data:
+            has_special = any(isinstance(c, special_types) for c in node_components)
+            if has_special:
+                batch_has_special = True
+                for c in node_components:
+                    if isinstance(c, special_types):
+                        if isinstance(c, File):
+                            c = normalize_file_payload(c)
+                            log_file_payload(c)
+                        chain = MessageChain([c])
+                        await self.context.send_message(unified_msg_origin, chain)
+                common_components = [
+                    c for c in node_components if not isinstance(c, special_types)
+                ]
+                if common_components:
+                    chain = MessageChain()
+                    chain.chain.extend(common_components)
+                    await self.context.send_message(unified_msg_origin, chain)
+                continue
+
+            message_chain = MessageChain()
+            message_chain.chain.extend(node_components)
+            await self.context.send_message(unified_msg_origin, message_chain)
+
+        if batch_has_special:
+            logger.info(
+                f"[QQSender] {node_name} -> {target_session}: 单条消息 (已拆分特殊媒体)"
+            )
+            return
+
+        logger.info(f"[QQSender] {node_name} -> {target_session}: 单条普通消息")
 
     async def initialize_runtime(self):
         """Best-effort bootstrap for platform_id/bot before first forward."""
@@ -363,6 +610,9 @@ class QQSender:
                 all_local_files = []
                 all_nodes_data = []
                 try:
+                    reply_preview_cache = await self._prefetch_reply_previews(
+                        msgs, src_channel, strip_links=strip_links
+                    )
                     for i, msg in enumerate(msgs):
                         current_node_components = []
                         text_parts = []
@@ -382,44 +632,17 @@ class QQSender:
                         for fpath in files:
                             all_local_files.append(fpath)
                             has_any_attachment = True
-                            ext = os.path.splitext(fpath)[1].lower()
-                            if ext in (
-                                ".jpg",
-                                ".jpeg",
-                                ".png",
-                                ".webp",
-                                ".gif",
-                                ".bmp",
-                            ):
-                                media_components.append(Image.fromFileSystem(fpath))
-                            elif ext in (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"):
-                                # Record — AstrBot 读取文件并上传，无需路径映射
-                                media_components.append(Record.fromFileSystem(fpath))
-                            elif ext in (".mp4", ".mkv", ".mov", ".webm", ".avi"):
-                                # Video — NapCat 直接读取文件，跨 Docker 需要路径映射
-                                mapped = self._map_path(fpath)
-                                if mapped != fpath:
-                                    media_components.append(Video(file=f"file:///{mapped}"))
-                                else:
-                                    media_components.append(Video.fromFileSystem(fpath))
-                            else:
-                                # 其他格式作为文件发送
-                                logger.debug(
-                                    f"[QQSender] 未知媒体类型 {ext}，尝试以 File 发送: {fpath}"
-                                )
-                                mapped = self._map_path(fpath)
-                                media_components.append(
-                                    File(
-                                        file=f"file:///{mapped}"
-                                        if mapped != fpath
-                                        else fpath,
-                                        name=os.path.basename(fpath),
-                                    )
-                                )
+                            media_components.extend(self._dispatch_media_file(fpath))
 
                         should_exclude_text = (
                             exclude_text_on_media and has_any_attachment
                         )
+
+                        reply_header = getattr(msg, "reply_to", None)
+                        reply_id = getattr(reply_header, "reply_to_msg_id", None)
+                        reply_preview = reply_preview_cache.get(reply_id)
+                        if reply_preview and not should_exclude_text:
+                            text_parts.insert(0, reply_preview)
 
                         # ─── 决定是否添加 From 头部 ───
                         add_header_this_time = False
@@ -482,6 +705,7 @@ class QQSender:
                             {
                                 "nodes_data": all_nodes_data,
                                 "local_files": all_local_files,
+                                "contains_audio": self._batch_contains_audio(all_nodes_data),
                             }
                         )
                 except Exception as e:
@@ -562,22 +786,26 @@ class QQSender:
                                 consecutive_failures += 1
                                 logger.warning(
                                     f"[QQSender] 大合并转发到 {target_session} 失败 "
-                                    f"(块 {chunk_idx}): {e}，降级为逐条发送"
+                                    f"(块 {chunk_idx}): {e}，降级为按批次保守发送"
                                 )
                                 fallback_ok = 0
-                                for nc in chunk_nodes:
+                                for batch_data in chunk_batches:
                                     try:
-                                        mc = MessageChain()
-                                        mc.chain.extend(nc)
-                                        await self.context.send_message(unified_msg_origin, mc)
+                                        await self._send_processed_batch(
+                                            batch_data=batch_data,
+                                            unified_msg_origin=unified_msg_origin,
+                                            self_id=self_id,
+                                            node_name=node_name,
+                                            target_session=target_session,
+                                        )
                                         fallback_ok += 1
-                                        await asyncio.sleep(2)
+                                        await asyncio.sleep(1)
                                     except Exception as e2:
-                                        logger.error(f"[QQSender] 降级单条发送也失败: {e2}")
-                                        break
+                                        logger.error(f"[QQSender] 降级批次发送失败: {e2}")
+                                        continue
                                 if fallback_ok:
                                     logger.info(
-                                        f"[QQSender] 降级发送完成: {fallback_ok}/{len(chunk_nodes)} 条"
+                                        f"[QQSender] 降级发送完成: {fallback_ok}/{len(chunk_batches)} 批"
                                     )
                                 if consecutive_failures >= 3:
                                     remaining = sum(
@@ -593,59 +821,14 @@ class QQSender:
                     else:
                         # 普通发送（逐个小相册 / 单条）
                         for batch_data in processed_batches:
-                            all_nodes_data = batch_data["nodes_data"]
                             try:
-                                if len(all_nodes_data) > 1:
-                                    # 小范围相册合并
-                                    message_chain = MessageChain()
-                                    nodes_list = [
-                                        Node(uin=self_id, name=node_name, content=nc)
-                                        for nc in all_nodes_data
-                                    ]
-                                    message_chain.chain.append(Nodes(nodes_list))
-                                    await self.context.send_message(
-                                        unified_msg_origin, message_chain
-                                    )
-                                    logger.info(
-                                        f"[QQSender] {node_name} -> {target_session}: 相册合并 ({len(all_nodes_data)} 节点)"
-                                    )
-                                else:
-                                    # 单条消息（可能含特殊媒体需拆分）
-                                    components = all_nodes_data[0]
-                                    special_types = (Record, File, Video)
-                                    has_special = any(
-                                        isinstance(c, special_types) for c in components
-                                    )
-                                    if has_special:
-                                        for c in components:
-                                            if isinstance(c, special_types):
-                                                chain = MessageChain([c])
-                                                await self.context.send_message(
-                                                    unified_msg_origin, chain
-                                                )
-                                        common_components = [
-                                            c
-                                            for c in components
-                                            if not isinstance(c, special_types)
-                                        ]
-                                        if common_components:
-                                            chain = MessageChain()
-                                            chain.chain.extend(common_components)
-                                            await self.context.send_message(
-                                                unified_msg_origin, chain
-                                            )
-                                        logger.info(
-                                            f"[QQSender] {node_name} -> {target_session}: 单条消息 (已拆分特殊媒体)"
-                                        )
-                                    else:
-                                        message_chain = MessageChain()
-                                        message_chain.chain.extend(components)
-                                        await self.context.send_message(
-                                            unified_msg_origin, message_chain
-                                        )
-                                        logger.info(
-                                            f"[QQSender] {node_name} -> {target_session}: 单条普通消息"
-                                        )
+                                await self._send_processed_batch(
+                                    batch_data=batch_data,
+                                    unified_msg_origin=unified_msg_origin,
+                                    self_id=self_id,
+                                    node_name=node_name,
+                                    target_session=target_session,
+                                )
                                 await asyncio.sleep(1)
                             except Exception as e:
                                 logger.error(
