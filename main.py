@@ -165,6 +165,10 @@ class Main(star.Star):
         # 取消延迟初始化任务
         if self._runtime_bootstrap_task and not self._runtime_bootstrap_task.done():
             self._runtime_bootstrap_task.cancel()
+            try:
+                await self._runtime_bootstrap_task
+            except asyncio.CancelledError:
+                pass
 
         # 0. 停止转发器逻辑
         if hasattr(self, "forwarder"):
@@ -173,8 +177,14 @@ class Main(star.Star):
         # 1. Stop Scheduler
         if self.scheduler.running:
             logger.debug("[Main] 正在关闭调度器...")
+            self.scheduler.pause()
             self.scheduler.shutdown(wait=False)
             logger.debug("[Main] 调度器已关闭。")
+        if hasattr(self, "forwarder"):
+            try:
+                await self.forwarder.shutdown(timeout=10.0)
+            except Exception as e:
+                logger.warning(f"[Main] 等待 Forwarder 关闭时遇到异常: {e}")
 
         # 2. Client Disconnect Strategy
         if self.client_wrapper and self.client_wrapper.client:
@@ -182,9 +192,7 @@ class Main(star.Star):
             logger.debug(f"[Main] 正在安全断开客户端连接: {session_path}")
             try:
                 # 稍微增加等待时间至 5 秒，确保 SQLite 事务安全提交
-                await asyncio.wait_for(
-                    self.client_wrapper.client.disconnect(), timeout=5.0
-                )
+                await self.client_wrapper.disconnect(timeout=5.0)
                 logger.debug("[Main] 客户端已安全断开连接。")
             except asyncio.TimeoutError:
                 logger.warning("[Main] 安全断开客户端连接超时，强制清理缓存。")
@@ -193,7 +201,7 @@ class Main(star.Star):
             finally:
                 # 无论是否成功断开，都清理缓存，确保下次加载时重新初始化
                 from .core.client import TelegramClientWrapper
-                TelegramClientWrapper.clear_cache(session_path)
+                await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
 
         logger.info("Telegram Forwarder 已停止")
 

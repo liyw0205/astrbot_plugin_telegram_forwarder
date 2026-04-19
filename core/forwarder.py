@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+from contextlib import suppress
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from telethon.tl.types import Message, PeerUser
@@ -79,6 +80,9 @@ class Forwarder:
         self._global_send_lock = asyncio.Lock()
         # 发送任务锁，避免定时发送与立即发送并发执行导致重复发送
         self._send_dispatch_lock = asyncio.Lock()
+        self._active_tasks: set[asyncio.Task] = set()
+        self._shutdown_complete = asyncio.Event()
+        self._shutdown_complete.set()
 
         # 缓存频道标题 (Key: ChannelUsername, Value: Title)
         self._channel_titles_cache = {}
@@ -98,6 +102,21 @@ class Forwarder:
         self.client = latest
         self.downloader.client = latest
         self.tg_sender.client = latest
+
+    def _track_current_task(self) -> None:
+        task = asyncio.current_task()
+        if task is None or task in self._active_tasks:
+            return
+
+        self._active_tasks.add(task)
+        self._shutdown_complete.clear()
+
+        def _cleanup(done_task: asyncio.Task) -> None:
+            self._active_tasks.discard(done_task)
+            if not self._active_tasks:
+                self._shutdown_complete.set()
+
+        task.add_done_callback(_cleanup)
 
     async def _ensure_client_ready(self) -> bool:
         """确保 client 可用且已连接。"""
@@ -386,6 +405,7 @@ class Forwarder:
         """
         检查所有配置的频道更新并加入待发送队列
         """
+        self._track_current_task()
         if self._stopping:
             return
 
@@ -452,6 +472,8 @@ class Forwarder:
                     return []
 
                 async with lock:
+                    if self._stopping:
+                        return []
                     self._channel_last_check[channel_name] = now
                     logger.debug(f"[Capture] 正在拉取: {channel_name}")
                     messages = await self._fetch_channel_messages(
@@ -464,6 +486,8 @@ class Forwarder:
                         # 先加入队列，再更新 last_id
                         pending_items = []
                         for m in messages:
+                            if self._stopping:
+                                return []
                             is_monitored = self._is_monitor_matched(m, effective_cfg)
                             if is_monitored:
                                 monitor_hit_count += 1
@@ -520,6 +544,8 @@ class Forwarder:
         tasks = [fetch_one(cfg) for cfg in channels_config]
         if tasks:
             monitor_hits = await asyncio.gather(*tasks)
+            if self._stopping:
+                return
             monitor_targets = set()
             for hits in monitor_hits:
                 for item in hits:
@@ -550,7 +576,10 @@ class Forwarder:
             logger.debug("[Send] 当前处于宵禁时间，跳过转发任务。")
             return
 
+        self._track_current_task()
         async with self._send_dispatch_lock:
+            if self._stopping:
+                return
             if force_immediate:
                 logger.debug("[Send] 监听命中触发立即转发，跳过发送周期等待。")
 
@@ -1130,6 +1159,28 @@ class Forwarder:
         """停止转发器工作"""
         self._stopping = True
 
+    async def shutdown(self, timeout: float = 10.0) -> None:
+        """Wait for running tasks to finish; cancel them if they overrun."""
+        self._stopping = True
+
+        pending_tasks = [task for task in self._active_tasks if not task.done()]
+        if not pending_tasks:
+            return
+
+        try:
+            await asyncio.wait_for(self._shutdown_complete.wait(), timeout=timeout)
+            return
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[Forwarder] 等待在途任务结束超时，准备取消剩余 {len(pending_tasks)} 个任务。"
+            )
+
+        for task in pending_tasks:
+            task.cancel()
+
+        with suppress(Exception):
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
     async def _fetch_channel_messages(
         self,
         channel_name: str,
@@ -1149,6 +1200,8 @@ class Forwarder:
         )
 
         try:
+            if self._stopping:
+                return []
             if not await self._ensure_client_ready():
                 logger.error(f"[Fetch] {channel_name}: client is not connected")
                 return []
@@ -1200,6 +1253,8 @@ class Forwarder:
                 logger.debug(f"[Fetch] {channel_name}: 增量拉取，ID > {last_id}")
 
             async for message in self.client.iter_messages(**params):
+                if self._stopping:
+                    break
                 if not message.id:
                     continue
 

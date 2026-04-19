@@ -54,6 +54,12 @@ class TelegramClientWrapper:
         await self.client.connect()
         return self.client.is_connected()
 
+    async def disconnect(self, timeout: float = 5.0) -> None:
+        """Safely disconnect the current Telethon client."""
+        if not self.client or not self.client.is_connected():
+            return
+        await asyncio.wait_for(self.client.disconnect(), timeout=timeout)
+
     async def send_login_code(self, phone: str) -> str:
         """发送登录验证码并返回 phone_code_hash。"""
         if not await self.ensure_connected():
@@ -284,3 +290,21 @@ class TelegramClientWrapper:
             logger.debug(f"[Client Cache] 清理所有缓存 ({client_count} 个会话)")
             cache.clear()
             auth_cache.clear()
+
+    @staticmethod
+    async def disconnect_and_clear_cache(
+        session_path: str, timeout: float = 5.0
+    ) -> None:
+        """Disconnect any cached client for a session and then clear caches."""
+        cache = get_client_cache()
+        cached_client = cache.get(session_path)
+
+        try:
+            if cached_client and cached_client.is_connected():
+                await asyncio.wait_for(cached_client.disconnect(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning(f"[Client Cache] 断开缓存客户端超时: {session_path}")
+        except Exception as e:
+            logger.debug(f"[Client Cache] 断开缓存客户端失败 {session_path}: {e}")
+        finally:
+            TelegramClientWrapper.clear_cache(session_path)
