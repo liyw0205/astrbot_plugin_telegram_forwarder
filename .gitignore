@@ -8,4 +8,5 @@ user_session.session*
 *.session-journal
 .omc
 .claude
+.worktrees/
 CLAUDE.md
