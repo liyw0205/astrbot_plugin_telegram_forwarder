@@ -241,3 +241,56 @@ def test_disconnect_and_clear_cache_closes_session_even_when_client_looks_discon
 
     cached_client.session.close.assert_called()
     assert session_path not in client_module.get_client_cache()
+
+
+def _make_wrapper_with_fake_client(client_module, config_overrides=None):
+    config = {
+        "api_id": 12345,
+        "api_hash": "hash",
+    }
+    if config_overrides:
+        config.update(config_overrides)
+
+    with patch.object(client_module, "TelegramClient", return_value=MagicMock()):
+        wrapper = client_module.TelegramClientWrapper(config, "synthetic/plugin-data")
+    return wrapper
+
+
+def test_ensure_connected_reraises_wrong_session_error_when_rebuild_disabled():
+    client_module = load_client_module()
+    wrapper = _make_wrapper_with_fake_client(
+        client_module,
+        {"wrong_session_rebuild_enabled": False},
+    )
+
+    wrong_session_error = RuntimeError("Wrong Session ID detected")
+    wrapper.client.is_connected.return_value = False
+    wrapper.client.connect = AsyncMock(side_effect=wrong_session_error)
+
+    with patch.object(client_module.TelegramClientWrapper, "disconnect_and_clear_cache", new=AsyncMock()) as clear_mock:
+        try:
+            asyncio.run(wrapper.ensure_connected())
+            assert False, "ensure_connected should re-raise when rebuild is disabled"
+        except RuntimeError as exc:
+            assert exc is wrong_session_error
+
+    clear_mock.assert_not_called()
+
+
+def test_ensure_connected_returns_false_when_second_connect_fails_after_rebuild():
+    client_module = load_client_module()
+    wrapper = _make_wrapper_with_fake_client(client_module)
+
+    wrapper.client.is_connected.return_value = False
+    wrapper.client.connect = AsyncMock(
+        side_effect=[
+            RuntimeError("wrong session id"),
+            RuntimeError("still broken after rebuild"),
+        ]
+    )
+
+    with patch.object(client_module.TelegramClientWrapper, "disconnect_and_clear_cache", new=AsyncMock()) as clear_mock:
+        result = asyncio.run(wrapper.ensure_connected())
+
+    assert result is False
+    clear_mock.assert_awaited_once_with(wrapper._session_path())

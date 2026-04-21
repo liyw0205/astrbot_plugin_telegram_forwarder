@@ -105,13 +105,50 @@ class TelegramClientWrapper:
         else:
             conn.close()
 
+    @staticmethod
+    def _is_wrong_session_error(exc: Exception) -> bool:
+        message = f"{exc!r} {exc}".casefold()
+        return "wrong session" in message and "id" in message
+
     async def ensure_connected(self) -> bool:
         if not self.client:
             return False
         if self.client.is_connected():
             return True
-        await self.client.connect()
-        return self.client.is_connected()
+
+        try:
+            await self.client.connect()
+            return self.client.is_connected()
+        except Exception as first_error:
+            if not self._is_wrong_session_error(first_error):
+                raise
+
+            if not self.config.get("wrong_session_rebuild_enabled", True):
+                raise
+
+            session_path = self._session_path()
+            logger.warning(
+                f"[Client] Wrong session detected, rebuild session and retry connect: {first_error}"
+            )
+            await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
+
+            self.client = None
+            self._init_client()
+            if not self.client:
+                logger.error(
+                    f"[Client] Rebuild completed but client re-init failed: {session_path}"
+                )
+                return False
+
+            try:
+                await self.client.connect()
+                return self.client.is_connected()
+            except Exception as second_error:
+                logger.error(
+                    f"[Client] Connect retry failed after session rebuild: "
+                    f"session_path={session_path}, first_error={first_error!r}, second_error={second_error!r}"
+                )
+                return False
 
     async def disconnect(self, timeout: float = 5.0) -> None:
         """Safely disconnect the current Telethon client."""

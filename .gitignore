@@ -7,6 +7,10 @@ __pycache__/
 user_session.session*
 *.session-journal
 .omc
+.omx
 .claude
 .worktrees/
 CLAUDE.md
+docs
+data
+pyrightconfig.json
