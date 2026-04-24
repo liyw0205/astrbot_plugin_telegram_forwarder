@@ -1,6 +1,6 @@
-from typing import List
 from telethon.tl.types import Message
-from astrbot.api import logger, AstrBotConfig
+
+from astrbot.api import AstrBotConfig, logger
 
 
 class TelegramSender:
@@ -12,7 +12,9 @@ class TelegramSender:
         self.client = client
         self.config = config
 
-    async def send(self, batches: List[List[Message]], src_channel: str, effective_cfg: dict = None):
+    async def send(
+        self, batches: list[list[Message]], src_channel: str, effective_cfg: dict | None = None
+    ):
         """
         转发消息到 Telegram 目标频道
 
@@ -35,9 +37,9 @@ class TelegramSender:
                     if target.startswith("-") or target.isdigit():
                         try:
                             target = int(target)
-                        except:
+                        except ValueError:
                             pass
-                
+
                 # 获取目标实体
                 target_entity = await self.client.get_entity(target)
 
@@ -46,6 +48,8 @@ class TelegramSender:
                     if not msgs:
                         continue
                     await self.client.forward_messages(target_entity, msgs)
-                    logger.debug(f"[TGSender] 已转发批次 ({len(msgs)} 条消息) 从 {src_channel} 到 Telegram 目标频道")
+                    logger.debug(
+                        f"[TGSender] 已转发批次 ({len(msgs)} 条消息) 从 {src_channel} 到 Telegram 目标频道"
+                    )
             except Exception as e:
                 logger.error(f"[TGSender] Telegram 转发错误: {e}")

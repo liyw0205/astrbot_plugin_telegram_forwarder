@@ -12,17 +12,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 def load_client_module():
     root = Path(__file__).resolve().parents[1]
     module_path = root / "core" / "client.py"
+    module_name = "astrbot_plugin_telegram_forwarder.core.client"
 
-    sys.modules["socks"] = SimpleNamespace(HTTP=1, SOCKS5=2)
-    sys.modules["telethon"] = SimpleNamespace(TelegramClient=MagicMock())
+    stubbed_modules = {
+        "socks": SimpleNamespace(HTTP=1, SOCKS5=2),
+        "telethon": SimpleNamespace(TelegramClient=MagicMock()),
+        "astrbot": MagicMock(),
+        "astrbot.api": SimpleNamespace(
+            logger=MagicMock(),
+            AstrBotConfig=dict,
+        ),
+    }
 
-    spec = importlib.util.spec_from_file_location(
-        "astrbot_plugin_telegram_forwarder.core.client",
-        module_path,
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    with patch.dict(sys.modules, stubbed_modules):
+        sys.modules.pop(module_name, None)
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        return mod
 
 
 def make_legacy_session_db(path: Path):
@@ -57,6 +65,29 @@ def make_test_dir() -> Path:
     path = root / f"session-schema-{uuid.uuid4().hex}"
     path.mkdir()
     return path
+
+
+def test_load_client_module_restores_sys_modules_after_stubbing():
+    sentinel_socks = object()
+    sentinel_telethon = object()
+    sentinel_astrbot = object()
+    sentinel_api = object()
+
+    with patch.dict(
+        sys.modules,
+        {
+            "socks": sentinel_socks,
+            "telethon": sentinel_telethon,
+            "astrbot": sentinel_astrbot,
+            "astrbot.api": sentinel_api,
+        },
+    ):
+        load_client_module()
+
+        assert sys.modules["socks"] is sentinel_socks
+        assert sys.modules["telethon"] is sentinel_telethon
+        assert sys.modules["astrbot"] is sentinel_astrbot
+        assert sys.modules["astrbot.api"] is sentinel_api
 
 
 def test_migrate_legacy_session_schema():
@@ -243,54 +274,92 @@ def test_disconnect_and_clear_cache_closes_session_even_when_client_looks_discon
     assert session_path not in client_module.get_client_cache()
 
 
-def _make_wrapper_with_fake_client(client_module, config_overrides=None):
-    config = {
-        "api_id": 12345,
-        "api_hash": "hash",
-    }
-    if config_overrides:
-        config.update(config_overrides)
+def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_if_still_disconnected():
+    client_module = load_client_module()
+    wrapper = object.__new__(client_module.TelegramClientWrapper)
+    wrapper.config = {"forward_config": {"wrong_session_rebuild_enabled": True}}
+    wrapper.plugin_data_dir = "synthetic/session"
 
-    with patch.object(client_module, "TelegramClient", return_value=MagicMock()):
-        wrapper = client_module.TelegramClientWrapper(config, "synthetic/plugin-data")
-    return wrapper
+    old_client = MagicMock()
+    old_client.is_connected.return_value = False
+    old_client.connect = AsyncMock(side_effect=RuntimeError("wrong session ID"))
+
+    new_client = MagicMock()
+    new_client.is_connected.return_value = False
+    new_client.connect = AsyncMock(return_value=None)
+
+    wrapper.client = old_client
+    wrapper._session_path = MagicMock(return_value="synthetic/session/user_session")
+    wrapper._init_client = MagicMock(side_effect=lambda: setattr(wrapper, "client", new_client))
+
+    with patch.object(
+        client_module.TelegramClientWrapper,
+        "disconnect_and_clear_cache",
+        new=AsyncMock(),
+    ) as disconnect_and_clear_cache:
+        connected = asyncio.run(wrapper.ensure_connected())
+
+    assert connected is False
+    old_client.connect.assert_awaited_once_with()
+    disconnect_and_clear_cache.assert_awaited_once_with("synthetic/session/user_session")
+    wrapper._init_client.assert_called_once_with()
+    new_client.connect.assert_awaited_once_with()
 
 
 def test_ensure_connected_reraises_wrong_session_error_when_rebuild_disabled():
     client_module = load_client_module()
-    wrapper = _make_wrapper_with_fake_client(
-        client_module,
-        {"wrong_session_rebuild_enabled": False},
-    )
+    wrapper = object.__new__(client_module.TelegramClientWrapper)
+    wrapper.config = {"forward_config": {"wrong_session_rebuild_enabled": False}}
+    wrapper.plugin_data_dir = "synthetic/session"
 
-    wrong_session_error = RuntimeError("Wrong Session ID detected")
-    wrapper.client.is_connected.return_value = False
-    wrapper.client.connect = AsyncMock(side_effect=wrong_session_error)
+    client = MagicMock()
+    client.is_connected.return_value = False
+    client.connect = AsyncMock(side_effect=RuntimeError("Wrong Session Id"))
+    wrapper.client = client
+    wrapper._session_path = MagicMock(return_value="synthetic/session/user_session")
+    wrapper._init_client = MagicMock()
 
-    with patch.object(client_module.TelegramClientWrapper, "disconnect_and_clear_cache", new=AsyncMock()) as clear_mock:
+    with patch.object(
+        client_module.TelegramClientWrapper,
+        "disconnect_and_clear_cache",
+        new=AsyncMock(),
+    ) as disconnect_and_clear_cache:
         try:
             asyncio.run(wrapper.ensure_connected())
-            assert False, "ensure_connected should re-raise when rebuild is disabled"
+            assert False, "expected wrong session error to be re-raised"
         except RuntimeError as exc:
-            assert exc is wrong_session_error
+            assert "Wrong Session Id" in str(exc)
 
-    clear_mock.assert_not_called()
+    disconnect_and_clear_cache.assert_not_awaited()
+    wrapper._init_client.assert_not_called()
 
 
 def test_ensure_connected_returns_false_when_second_connect_fails_after_rebuild():
     client_module = load_client_module()
-    wrapper = _make_wrapper_with_fake_client(client_module)
+    wrapper = object.__new__(client_module.TelegramClientWrapper)
+    wrapper.config = {"forward_config": {"wrong_session_rebuild_enabled": True}}
+    wrapper.plugin_data_dir = "synthetic/session"
 
-    wrapper.client.is_connected.return_value = False
-    wrapper.client.connect = AsyncMock(
-        side_effect=[
-            RuntimeError("wrong session id"),
-            RuntimeError("still broken after rebuild"),
-        ]
-    )
+    old_client = MagicMock()
+    old_client.is_connected.return_value = False
+    old_client.connect = AsyncMock(side_effect=RuntimeError("wrong session ID"))
 
-    with patch.object(client_module.TelegramClientWrapper, "disconnect_and_clear_cache", new=AsyncMock()) as clear_mock:
-        result = asyncio.run(wrapper.ensure_connected())
+    new_client = MagicMock()
+    new_client.is_connected.return_value = False
+    new_client.connect = AsyncMock(side_effect=RuntimeError("network still broken"))
 
-    assert result is False
-    clear_mock.assert_awaited_once_with(wrapper._session_path())
+    wrapper.client = old_client
+    wrapper._session_path = MagicMock(return_value="synthetic/session/user_session")
+    wrapper._init_client = MagicMock(side_effect=lambda: setattr(wrapper, "client", new_client))
+
+    with patch.object(
+        client_module.TelegramClientWrapper,
+        "disconnect_and_clear_cache",
+        new=AsyncMock(),
+    ) as disconnect_and_clear_cache:
+        connected = asyncio.run(wrapper.ensure_connected())
+
+    assert connected is False
+    disconnect_and_clear_cache.assert_awaited_once_with("synthetic/session/user_session")
+    wrapper._init_client.assert_called_once_with()
+    new_client.connect.assert_awaited_once_with()

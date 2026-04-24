@@ -1,9 +1,10 @@
 import asyncio
 import os
-import json
-from telethon import TelegramClient
-import socks
 from urllib.parse import urlparse
+
+import socks
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 
 # 定义路径
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,7 +12,9 @@ PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 # 尝试定位标准 AstrBot 数据目录 (../../plugin_data/astrbot_plugin_telegram_forwarder)
 # 假设结构: data/plugins/this_plugin -> data/plugin_data/this_plugin
 EXPECTED_DATA_DIR = os.path.abspath(
-    os.path.join(PLUGIN_DIR, "..", "..", "plugin_data", "astrbot_plugin_telegram_forwarder")
+    os.path.join(
+        PLUGIN_DIR, "..", "..", "plugin_data", "astrbot_plugin_telegram_forwarder"
+    )
 )
 
 if os.path.exists(EXPECTED_DATA_DIR):
@@ -20,7 +23,9 @@ if os.path.exists(EXPECTED_DATA_DIR):
 else:
     DATA_DIR = PLUGIN_DIR
     print(f"未找到标准数据目录，使用当前目录: {DATA_DIR}")
-    print("警告: 这可能导致主程序无法读取生成的 Session 文件。请确保插件已正确安装运行过一次。")
+    print(
+        "警告: 这可能导致主程序无法读取生成的 Session 文件。请确保插件已正确安装运行过一次。"
+    )
 
 SESSION_FILE = os.path.join(DATA_DIR, "user_session")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -49,6 +54,10 @@ if proxy_url:
         print(f"代理设置错误: {e}")
 
 
+async def _async_input(prompt: str) -> str:
+    return (await asyncio.to_thread(input, prompt)).strip()
+
+
 async def main():
     print(f"正在连接... (Session路径: {SESSION_FILE})")
     client = TelegramClient(SESSION_FILE, api_id, api_hash, proxy=proxy_setting)
@@ -57,19 +66,18 @@ async def main():
 
     if not await client.is_user_authorized():
         print("未授权，开始登录流程...")
-        phone = input("请输入手机号 (带国际区号, 如 +86138...): ").strip()
+        phone = await _async_input("请输入手机号 (带国际区号, 如 +86138...): ")
         await client.send_code_request(phone)
 
-        code = input("请输入您收到的验证码: ").strip()
+        code = await _async_input("请输入您收到的验证码: ")
         try:
             await client.sign_in(phone, code)
+        except SessionPasswordNeededError:
+            pw = await _async_input("请输入两步验证密码: ")
+            await client.sign_in(password=pw)
         except Exception as e:
-            if "password" in str(e).lower():
-                pw = input("请输入两步验证密码: ").strip()
-                await client.sign_in(password=pw)
-            else:
-                print(f"登录失败: {e}")
-                return
+            print(f"登录失败: {e}")
+            return
 
     print("登录成功！")
     me = await client.get_me()

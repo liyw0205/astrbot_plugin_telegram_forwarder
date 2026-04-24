@@ -1,7 +1,7 @@
-from typing import List, Tuple, Dict, Optional
 from telethon.tl.types import Message
 
 from astrbot.api import logger
+
 from .base import MergeRule
 from .someacg import SomeACGPreviewPlusOriginal
 
@@ -27,7 +27,7 @@ class MessageMerger:
             f"[Merge] 合并引擎已启动，加载了 {len(self.merge_rules)} 条规则: {list(self.merge_rules.keys())}"
         )
 
-    def _load_merge_rules(self) -> Dict[str, MergeRule]:
+    def _load_merge_rules(self) -> dict[str, MergeRule]:
         """
         从配置加载合并规则
         """
@@ -60,8 +60,8 @@ class MessageMerger:
         return merge_rules
 
     def merge_messages(
-        self, messages: List[Tuple[str, Message]]
-    ) -> List[Tuple[str, Message]]:
+        self, messages: list[tuple[str, Message]]
+    ) -> list[tuple[str, Message]]:
         """
         对消息应用合并规则
 
@@ -132,7 +132,7 @@ class MessageMerger:
     def _find_group(
         self,
         start_index: int,
-        messages: List[Tuple[str, Message]],
+        messages: list[tuple[str, Message]],
         channel_name: str,
         rule: MergeRule,
         used_indices: set,

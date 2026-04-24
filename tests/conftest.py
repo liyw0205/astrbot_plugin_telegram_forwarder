@@ -1,11 +1,37 @@
 """测试 conftest — 通过拦截 import 直接加载 qq.py 避免相对导入问题。"""
+import asyncio
 import builtins
+import inspect
 import importlib.util
 import os
 import sys
 from unittest.mock import MagicMock
 
 import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "asyncio: run async test functions with asyncio when pytest-asyncio is absent",
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pyfunc_call(pyfuncitem):
+    if pyfuncitem.config.pluginmanager.hasplugin("asyncio"):
+        return None
+
+    testfunction = pyfuncitem.obj
+    if not inspect.iscoroutinefunction(testfunction):
+        return None
+
+    testargs = {
+        arg: pyfuncitem.funcargs[arg]
+        for arg in pyfuncitem._fixtureinfo.argnames
+    }
+    asyncio.run(testfunction(**testargs))
+    return True
 
 # ─── Mock qq.py 的所有顶层 import 依赖 ───
 

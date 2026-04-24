@@ -305,11 +305,59 @@
                 },
                 "default": 3
             },
+            "qq_send_logical_unit_budget": {
+                "description": "QQ 单轮发送逻辑单元预算",
+                "type": "int",
+                "default": 0,
+                "hint": "限制每轮 send_pending_messages 最多发送多少个 QQ 逻辑单元（单条=1，相册=1）；0 表示不额外限制"
+            },
+            "qq_target_fail_fast_consecutive_failures": {
+                "description": "QQ 目标连续失败熔断阈值",
+                "type": "int",
+                "default": 3,
+                "hint": "同一 QQ 目标连续失败达到该值时，跳过该目标本轮剩余批次/分块"
+            },
+            "target_circuit_fail_threshold": {
+                "description": "QQ 目标熔断失败阈值",
+                "type": "int",
+                "default": 3,
+                "hint": "同一 QQ 目标连续失败达到该值时，打开目标熔断"
+            },
+            "target_circuit_cooldown_sec": {
+                "description": "QQ 目标熔断冷却时间(秒)",
+                "type": "int",
+                "default": 300,
+                "hint": "目标熔断打开后，冷却时间内跳过该目标的发送"
+            },
             "retention_period": {
                 "description": "消息保留时间 (秒)",
                 "hint": "超过此时间的消息在发送前将被丢弃",
                 "type": "int",
                 "default": 86400
+            },
+            "send_result_strict_ack": {
+                "description": "严格 ACK 移除队列",
+                "type": "bool",
+                "default": false,
+                "hint": "关闭时保留当前兼容行为；开启后，仅 sender 明确确认成功的逻辑批次才会从待发送队列移除"
+            },
+            "pending_retry_base_delay_sec": {
+                "description": "失败重试基础退避秒数",
+                "type": "int",
+                "default": 60,
+                "hint": "失败批次第一次重试等待多久；后续按指数退避增长"
+            },
+            "pending_retry_max_delay_sec": {
+                "description": "失败重试最大退避秒数",
+                "type": "int",
+                "default": 1800,
+                "hint": "失败批次指数退避的最大等待时间"
+            },
+            "wrong_session_rebuild_enabled": {
+                "description": "会话异常自动重建",
+                "type": "bool",
+                "default": true,
+                "hint": "遇到 wrong session ID 等会话异常时，清理缓存并重建连接一次"
             },
             "curfew_time": {
                 "description": "宵禁时间段",

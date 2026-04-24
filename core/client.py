@@ -34,6 +34,11 @@ class TelegramClientWrapper:
     负责创建和管理 Telethon 客户端实例。
     """
 
+    @staticmethod
+    def _is_wrong_session_error(exc: Exception) -> bool:
+        error_text = f"{exc!r} {exc}".casefold()
+        return "wrong session id" in error_text
+
     def __init__(self, config: AstrBotConfig, plugin_data_dir: str):
         """
         初始化客户端封装
@@ -105,50 +110,39 @@ class TelegramClientWrapper:
         else:
             conn.close()
 
-    @staticmethod
-    def _is_wrong_session_error(exc: Exception) -> bool:
-        message = f"{exc!r} {exc}".casefold()
-        return "wrong session" in message and "id" in message
-
     async def ensure_connected(self) -> bool:
         if not self.client:
             return False
         if self.client.is_connected():
             return True
 
+        forward_cfg = self.config.get("forward_config", {}) if self.config else {}
+        allow_rebuild = forward_cfg.get("wrong_session_rebuild_enabled", True)
+
         try:
             await self.client.connect()
-            return self.client.is_connected()
-        except Exception as first_error:
-            if not self._is_wrong_session_error(first_error):
-                raise
-
-            if not self.config.get("wrong_session_rebuild_enabled", True):
+        except Exception as e:
+            if not allow_rebuild or not self._is_wrong_session_error(e):
                 raise
 
             session_path = self._session_path()
             logger.warning(
-                f"[Client] Wrong session detected, rebuild session and retry connect: {first_error}"
+                f"[Client] 检测到 wrong session ID，准备清理并重建会话: {session_path}"
             )
             await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
-
-            self.client = None
             self._init_client()
             if not self.client:
-                logger.error(
-                    f"[Client] Rebuild completed but client re-init failed: {session_path}"
-                )
                 return False
 
             try:
                 await self.client.connect()
-                return self.client.is_connected()
-            except Exception as second_error:
+            except Exception as retry_error:
                 logger.error(
-                    f"[Client] Connect retry failed after session rebuild: "
-                    f"session_path={session_path}, first_error={first_error!r}, second_error={second_error!r}"
+                    f"[Client] wrong session ID 自愈重连失败: {session_path} | first_error={e!r} | retry_error={retry_error!r}"
                 )
                 return False
+
+        return self.client.is_connected()
 
     async def disconnect(self, timeout: float = 5.0) -> None:
         """Safely disconnect the current Telethon client."""
@@ -160,7 +154,9 @@ class TelegramClientWrapper:
         """发送登录验证码并返回 phone_code_hash。"""
         if not await self.ensure_connected():
             raise RuntimeError("Telegram 客户端未初始化，请先设置 api_id/api_hash")
-        sent = await asyncio.wait_for(self.client.send_code_request(phone), timeout=30.0)
+        sent = await asyncio.wait_for(
+            self.client.send_code_request(phone), timeout=30.0
+        )
         return getattr(sent, "phone_code_hash", "")
 
     async def sign_in_with_code(self, phone: str, code: str, phone_code_hash: str = ""):
@@ -168,7 +164,9 @@ class TelegramClientWrapper:
         if not await self.ensure_connected():
             raise RuntimeError("Telegram 客户端未初始化，请先设置 api_id/api_hash")
         if phone_code_hash:
-            await self.client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+            await self.client.sign_in(
+                phone=phone, code=code, phone_code_hash=phone_code_hash
+            )
         else:
             await self.client.sign_in(phone=phone, code=code)
         return await self._mark_authorized_if_needed()
@@ -234,11 +232,15 @@ class TelegramClientWrapper:
             if session_path in cache:
                 cached_client = cache[session_path]
                 if cached_client and cached_client.is_connected():
-                    logger.debug(f"[Client Cache] 复用现有的 Telegram 客户端连接: {session_path}")
+                    logger.debug(
+                        f"[Client Cache] 复用现有的 Telegram 客户端连接: {session_path}"
+                    )
                     self.client = cached_client
                     return
                 else:
-                    logger.debug(f"[Client Cache] 缓存的客户端已断开，正在重新创建: {session_path}")
+                    logger.debug(
+                        f"[Client Cache] 缓存的客户端已断开，正在重新创建: {session_path}"
+                    )
                     del cache[session_path]
 
             # ========== 代理配置解析 ==========
@@ -269,7 +271,9 @@ class TelegramClientWrapper:
 
             # ========== 加入缓存 ==========
             cache[session_path] = self.client
-            logger.debug(f"[Client Cache] 已创建并缓存新的 Telegram 客户端: {session_path}")
+            logger.debug(
+                f"[Client Cache] 已创建并缓存新的 Telegram 客户端: {session_path}"
+            )
 
         else:
             logger.warning(
@@ -317,7 +321,9 @@ class TelegramClientWrapper:
                     if authorized:
                         auth_cache[session_path] = True
                         self._authorized = True
-                        logger.debug(f"[Client Cache] 复用已授权的客户端: {session_path}")
+                        logger.debug(
+                            f"[Client Cache] 复用已授权的客户端: {session_path}"
+                        )
                         return
 
             # ========== 慢速路径：完整初始化 ==========
@@ -326,7 +332,9 @@ class TelegramClientWrapper:
             # ========== 检查授权状态 ==========
             authorized = await self.client.is_user_authorized()
             if not authorized:
-                logger.warning(f"[Client] 客户端未授权。会话路径: {os.path.join(self.plugin_data_dir, 'user_session.session')}")
+                logger.warning(
+                    f"[Client] 客户端未授权。会话路径: {os.path.join(self.plugin_data_dir, 'user_session.session')}"
+                )
 
                 phone = self.config.get("phone")
                 if phone:
@@ -339,7 +347,9 @@ class TelegramClientWrapper:
                         logger.error("[Client] 发送验证码请求超时")
                         return
 
-                    logger.error("[Client] Telegram 客户端需要验证！请在交互式终端运行一次以完成登录。")
+                    logger.error(
+                        "[Client] Telegram 客户端需要验证！请在交互式终端运行一次以完成登录。"
+                    )
                     return
                 else:
                     logger.error("[Client] 未提供手机号，无法登录。")
@@ -378,7 +388,9 @@ class TelegramClientWrapper:
             if session and callable(getattr(session, "close", None)):
                 session.close()
         except Exception as e:
-            logger.debug(f"[Client Cache] 关闭 session 时异常（通常不影响下次启动）: {e}")
+            logger.debug(
+                f"[Client Cache] 关闭 session 时异常（通常不影响下次启动）: {e}"
+            )
 
     @staticmethod
     def clear_cache(session_path=None):

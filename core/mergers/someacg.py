@@ -1,8 +1,9 @@
 import re
-from typing import Optional, Tuple, List
-from telethon.tl.types import Message, MessageMediaPhoto, MessageMediaDocument
+
+from telethon.tl.types import Message, MessageMediaDocument, MessageMediaPhoto
 
 from astrbot.api import logger
+
 from .base import MergeRule
 
 
@@ -10,7 +11,7 @@ class SomeACGPreviewPlusOriginal(MergeRule):
     """SomeACG 频道专用合并规则：预览图说明 + 原图"""
 
     def can_merge(
-        self, channel_name: str, msg1: Tuple[str, Message], msg2: Tuple[str, Message]
+        self, channel_name: str, msg1: tuple[str, Message], msg2: tuple[str, Message]
     ) -> bool:
         """
         判断是否为 SomeACG 的预览图+原图模式
@@ -93,9 +94,7 @@ class SomeACGPreviewPlusOriginal(MergeRule):
         time_diff = (message2.date - message1.date).total_seconds()
 
         if time_diff < 0 or time_diff > time_window:
-            logger.debug(
-                f"[SomeACG] 超出时间窗口: {time_diff}s > {time_window}s"
-            )
+            logger.debug(f"[SomeACG] 超出时间窗口: {time_diff}s > {time_window}s")
             return False
 
         original_type = "Audio" if is_audio_original else "Document"
@@ -105,7 +104,7 @@ class SomeACGPreviewPlusOriginal(MergeRule):
 
         return True
 
-    def get_group_key(self, msg: Tuple[str, Message]) -> Optional[str]:
+    def get_group_key(self, msg: tuple[str, Message]) -> str | None:
         """
         获取分组 key
 
@@ -133,7 +132,7 @@ class SomeACGPreviewPlusOriginal(MergeRule):
         return None
 
     def apply_merge_marker(
-        self, messages: List[Tuple[str, Message]], group_key: str
+        self, messages: list[tuple[str, Message]], group_key: str
     ) -> None:
         """
         为一组关联消息添加合并标记
@@ -199,7 +198,7 @@ class SomeACGPreviewPlusOriginal(MergeRule):
 
         return True
 
-    def _extract_pixiv_id(self, text: str) -> Optional[str]:
+    def _extract_pixiv_id(self, text: str) -> str | None:
         """从文本中提取 pixiv ID"""
         if not text:
             return None
@@ -210,7 +209,7 @@ class SomeACGPreviewPlusOriginal(MergeRule):
 
         return None
 
-    def _extract_pixiv_id_from_filename(self, msg: Message) -> Optional[str]:
+    def _extract_pixiv_id_from_filename(self, msg: Message) -> str | None:
         """从文件名中提取 pixiv ID"""
         if not msg.media or not isinstance(msg.media, MessageMediaDocument):
             return None

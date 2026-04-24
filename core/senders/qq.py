@@ -1,17 +1,21 @@
-import os
 import asyncio
-from typing import List, Optional, Iterable
+import os
+import time
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
 from telethon.tl.types import Message
-from astrbot.api import logger, AstrBotConfig, star
+
+from astrbot.api import AstrBotConfig, logger, star
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import (
-    Plain,
+    File,
     Image,
-    Record,
-    Video,
     Node,
     Nodes,
-    File,
+    Plain,
+    Record,
+    Video,
 )
 
 try:
@@ -25,6 +29,14 @@ from ...common.text_tools import (
     to_telethon_entity,
 )
 from ..downloader import MediaDownloader
+
+
+@dataclass(frozen=True)
+class QQSendSummary:
+    acked_batch_indexes: tuple[int, ...] = ()
+    failed_batch_indexes: tuple[int, ...] = ()
+    deferred_batch_indexes: tuple[int, ...] = ()
+    error_types: dict[int, str] = field(default_factory=dict)
 
 
 class QQSender:
@@ -42,6 +54,7 @@ class QQSender:
         self.platform_id = None  # 动态捕获的平台 ID
         self.bot = None  # 动态捕获的 bot 实例
         self.node_name = None  # 合并转发消息时显示的 bot 昵称
+        self._target_circuit: dict[str, dict[str, float | int]] = {}
 
     async def _ensure_node_name(self, bot, cache_fallback: bool = False):
         """获取 bot 昵称"""
@@ -55,7 +68,7 @@ class QQSender:
                 self.node_name = str(nickname)
                 logger.debug(f"[QQSender] 获取到 bot 昵称: {self.node_name}")
             else:
-                logger.debug(f"[QQSender] 未能从登录信息获取到昵称")
+                logger.debug("[QQSender] 未能从登录信息获取到昵称")
         except Exception as e:
             logger.debug(f"[QQSender] 获取 bot 昵称异常: {e}")
 
@@ -93,8 +106,8 @@ class QQSender:
                 mapped = self._map_path(fpath)
                 return [
                     File(
-                        file=fpath,
-                        url=mapped if mapped != fpath else "",
+                        file=mapped,
+                        url="",
                         name=os.path.basename(fpath),
                     )
                 ]
@@ -110,8 +123,8 @@ class QQSender:
         mapped = self._map_path(fpath)
         return [
             File(
-                file=fpath,
-                url=mapped if mapped != fpath else "",
+                file=mapped,
+                url="",
                 name=os.path.basename(fpath),
             )
         ]
@@ -142,7 +155,9 @@ class QQSender:
             return "[文件]"
         return "[消息]"
 
-    def _build_reply_preview(self, reply_msg: Message, strip_links: bool = False) -> str:
+    def _build_reply_preview(
+        self, reply_msg: Message, strip_links: bool = False
+    ) -> str:
         sender_name = self._get_sender_display_name(reply_msg)
         if getattr(reply_msg, "text", None):
             preview = clean_telegram_text(reply_msg.text, strip_links=strip_links)
@@ -158,7 +173,7 @@ class QQSender:
         return f"↩ 回复:\n{preview}"
 
     async def _prefetch_reply_previews(
-        self, msgs: List[Message], src_channel: str, strip_links: bool = False
+        self, msgs: list[Message], src_channel: str, strip_links: bool = False
     ) -> dict[int, str]:
         existing_ids = {getattr(msg, "id", None) for msg in msgs}
         reply_ids = []
@@ -199,11 +214,9 @@ class QQSender:
         return preview_cache
 
     @staticmethod
-    def _batch_contains_audio(nodes_data: List[List[object]]) -> bool:
+    def _batch_contains_audio(nodes_data: list[list[object]]) -> bool:
         return any(
-            isinstance(component, Record)
-            for node in nodes_data
-            for component in node
+            isinstance(component, Record) for node in nodes_data for component in node
         )
 
     @staticmethod
@@ -233,7 +246,9 @@ class QQSender:
                 return component
             compat_file = getattr(component, "file_", None)
             if compat_file:
-                normalized = File(file=compat_file, name=getattr(component, "name", None))
+                normalized = File(
+                    file=compat_file, name=getattr(component, "name", None)
+                )
                 if getattr(component, "file_", None) is not None:
                     setattr(normalized, "file_", component.file_)
                 return normalized
@@ -261,7 +276,6 @@ class QQSender:
             )
             return
 
-        components = all_nodes_data[0]
         if batch_data.get("contains_audio"):
             for node_components in all_nodes_data:
                 common_components = []
@@ -273,13 +287,15 @@ class QQSender:
                         if path:
                             mapped = self._map_path(path)
                             file_component = File(
-                                file=path,
-                                url=mapped if mapped != path else "",
+                                file=mapped,
+                                url="",
                                 name=os.path.basename(path),
                             )
                             log_file_payload(file_component)
                             file_chain = MessageChain([file_component])
-                            await self.context.send_message(unified_msg_origin, file_chain)
+                            await self.context.send_message(
+                                unified_msg_origin, file_chain
+                            )
                     else:
                         if isinstance(component, File):
                             component = normalize_file_payload(component)
@@ -296,6 +312,12 @@ class QQSender:
         special_types = (Record, File, Video)
         batch_has_special = False
         for node_components in all_nodes_data:
+            component_types = [
+                type(component).__name__ for component in node_components
+            ]
+            logger.debug(
+                f"[QQSender] target={target_session} node_types={component_types}"
+            )
             has_special = any(isinstance(c, special_types) for c in node_components)
             if has_special:
                 batch_has_special = True
@@ -351,9 +373,9 @@ class QQSender:
         return []
 
     @staticmethod
-    def _dedupe_keep_order(items: Iterable[str]) -> List[str]:
+    def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
         seen = set()
-        result: List[str] = []
+        result: list[str] = []
         for item in items:
             if item in seen:
                 continue
@@ -362,10 +384,10 @@ class QQSender:
         return result
 
     @staticmethod
-    def _split_qq_targets(targets: list) -> tuple[List[str], List[str]]:
+    def _split_qq_targets(targets: list) -> tuple[list[str], list[str]]:
         """Split config targets into full sessions and numeric group IDs."""
-        session_targets: List[str] = []
-        group_ids: List[str] = []
+        session_targets: list[str] = []
+        group_ids: list[str] = []
         for raw in targets:
             if raw is None:
                 continue
@@ -384,16 +406,63 @@ class QQSender:
         return session_targets, group_ids
 
     @staticmethod
-    def _session_platform_ids(session_targets: List[str]) -> List[str]:
-        platform_ids: List[str] = []
+    def _session_platform_ids(session_targets: list[str]) -> list[str]:
+        platform_ids: list[str] = []
         for session in session_targets:
             if ":" not in session:
                 continue
             platform_ids.append(session.split(":", 1)[0])
         return QQSender._dedupe_keep_order(platform_ids)
 
+    @staticmethod
+    def _classify_send_error(error: Exception) -> str:
+        message = str(error)
+        if "WebSocket API call timeout" in message:
+            return "timeout"
+        if "retcode=1200" in message:
+            return "retcode_1200"
+        if "wrong session ID" in message:
+            return "wrong_session_id"
+        return "send_failed"
+
+    def _target_is_open(self, target_session: str, now_ts: float) -> bool:
+        circuit = self._target_circuit.get(target_session)
+        if not circuit:
+            return False
+        open_until = float(circuit.get("open_until", 0.0))
+        if open_until <= 0:
+            return False
+        if open_until <= now_ts:
+            self._target_circuit.pop(target_session, None)
+            return False
+        return True
+
+    def _record_target_failure(
+        self,
+        target_session: str,
+        *,
+        threshold: int,
+        cooldown_sec: int,
+        now_ts: float,
+    ) -> None:
+        circuit = self._target_circuit.get(target_session) or {
+            "consecutive_failures": 0,
+            "open_until": 0.0,
+        }
+        consecutive_failures = int(circuit.get("consecutive_failures", 0)) + 1
+        open_until = 0.0
+        if consecutive_failures >= threshold:
+            open_until = now_ts + float(cooldown_sec)
+        self._target_circuit[target_session] = {
+            "consecutive_failures": consecutive_failures,
+            "open_until": open_until,
+        }
+
+    def _record_target_success(self, target_session: str) -> None:
+        self._target_circuit.pop(target_session, None)
+
     async def _bootstrap_qq_runtime(
-        self, preferred_platform_ids: Optional[List[str]] = None
+        self, preferred_platform_ids: list[str] | None = None
     ):
         """Try to fetch platform_id and bot from context.platform_manager."""
         if self.platform_id and self.bot:
@@ -462,11 +531,12 @@ class QQSender:
 
     async def send(
         self,
-        batches: List[List[Message]],
+        batches: list[list[Message]],
         src_channel: str,
-        display_name: str = None,
-        effective_cfg: dict = None,
-        involved_channels: List[str] = None,  # 新增：混合模式时传入实际涉及的频道列表
+        display_name: str | None = None,
+        effective_cfg: dict[str, object] | None = None,
+        involved_channels: list[str]
+        | None = None,  # 新增：混合模式时传入实际涉及的频道列表
     ):
         """
         转发消息到 QQ 群
@@ -491,12 +561,12 @@ class QQSender:
         qq_targets = effective_qq_targets
 
         if not qq_targets or not batches:
-            return
+            return QQSendSummary()
 
         if isinstance(qq_targets, int):
             qq_targets = [qq_targets]
         elif not isinstance(qq_targets, list):
-            return
+            return QQSendSummary()
 
         session_targets_cfg, numeric_group_ids = self._split_qq_targets(qq_targets)
         preferred_platform_ids = self._session_platform_ids(session_targets_cfg)
@@ -523,10 +593,37 @@ class QQSender:
         context_target_sessions = self._dedupe_keep_order(context_target_sessions)
 
         if not context_target_sessions:
-            return
+            return QQSendSummary()
 
         forward_cfg = self.config.get("forward_config", {})
         qq_merge_threshold = forward_cfg.get("qq_merge_threshold", 0)
+        fail_fast_limit = forward_cfg.get("qq_target_fail_fast_consecutive_failures", 3)
+        try:
+            fail_fast_limit = int(fail_fast_limit)
+        except (TypeError, ValueError):
+            fail_fast_limit = 3
+        if fail_fast_limit < 1:
+            fail_fast_limit = 1
+
+        target_circuit_fail_threshold = forward_cfg.get(
+            "target_circuit_fail_threshold", 3
+        )
+        try:
+            target_circuit_fail_threshold = int(target_circuit_fail_threshold)
+        except (TypeError, ValueError):
+            target_circuit_fail_threshold = 3
+        if target_circuit_fail_threshold < 1:
+            target_circuit_fail_threshold = 1
+
+        target_circuit_cooldown_sec = forward_cfg.get(
+            "target_circuit_cooldown_sec", 300
+        )
+        try:
+            target_circuit_cooldown_sec = int(target_circuit_cooldown_sec)
+        except (TypeError, ValueError):
+            target_circuit_cooldown_sec = 300
+        if target_circuit_cooldown_sec < 1:
+            target_circuit_cooldown_sec = 1
 
         # 兼容大合并调用时多包一层的情况
         real_batches = []
@@ -542,7 +639,7 @@ class QQSender:
 
         if not real_batches:
             logger.debug("[QQSender] 展平后无有效批次，跳过发送")
-            return
+            return QQSendSummary()
 
         logger.debug(
             f"[QQSender] 接收到 {len(batches)} 批次，展平后 {len(real_batches)} 个逻辑批次"
@@ -604,9 +701,14 @@ class QQSender:
 
             # 预处理所有批次
             processed_batches = []
+            target_successes = {
+                batch_index: set() for batch_index in range(len(real_batches))
+            }
+            target_failures: dict[int, str] = {}
+            deferred_batch_indexes: set[int] = set()
             header_added = False  # 用于混合模式：只在全局第一个节点加 header
 
-            for msgs in real_batches:
+            for batch_index, msgs in enumerate(real_batches):
                 all_local_files = []
                 all_nodes_data = []
                 try:
@@ -703,13 +805,21 @@ class QQSender:
                     if all_nodes_data:
                         processed_batches.append(
                             {
+                                "batch_index": batch_index,
                                 "nodes_data": all_nodes_data,
                                 "local_files": all_local_files,
-                                "contains_audio": self._batch_contains_audio(all_nodes_data),
+                                "contains_audio": self._batch_contains_audio(
+                                    all_nodes_data
+                                ),
                             }
                         )
+                    else:
+                        target_failures.setdefault(batch_index, "preprocess_empty")
                 except Exception as e:
                     logger.error(f"[QQSender] 预处理消息批次异常: {e}")
+                    target_failures.setdefault(
+                        batch_index, self._classify_send_error(e)
+                    )
                     self._cleanup_files(all_local_files)
 
             use_big_merge = (qq_merge_threshold > 1) and (
@@ -726,6 +836,14 @@ class QQSender:
                     continue
                 lock = self._get_lock(target_session)
                 async with lock:
+                    now_ts = time.time()
+                    if self._target_is_open(target_session, now_ts):
+                        logger.warning(
+                            f"[QQSender] 目标 {target_session} 熔断冷却中，跳过本轮发送"
+                        )
+                        deferred_batch_indexes.update(range(len(real_batches)))
+                        continue
+
                     unified_msg_origin = target_session
 
                     if use_big_merge or is_mixed_big_merge:
@@ -734,13 +852,15 @@ class QQSender:
                         chunk_size = forward_cfg.get("qq_merge_chunk_size", 5)
                         chunk_delay = forward_cfg.get("qq_merge_chunk_delay", 3)
 
-                        batch_chunks: List[List[dict]] = []
-                        current_chunk_batches: List[dict] = []
+                        batch_chunks: list[list[dict]] = []
+                        current_chunk_batches: list[dict] = []
                         current_chunk_nodes = 0
                         for batch_data in processed_batches:
                             batch_node_count = len(batch_data["nodes_data"])
-                            # 如果加入当前批次会超限，且当前块非空，则开新块
-                            if current_chunk_nodes + batch_node_count > chunk_size and current_chunk_batches:
+                            if (
+                                current_chunk_nodes + batch_node_count > chunk_size
+                                and current_chunk_batches
+                            ):
                                 batch_chunks.append(current_chunk_batches)
                                 current_chunk_batches = []
                                 current_chunk_nodes = 0
@@ -752,8 +872,10 @@ class QQSender:
                         total_chunks = len(batch_chunks)
                         consecutive_failures = 0
                         for chunk_idx, chunk_batches in enumerate(batch_chunks, 1):
-                            # 收集本块所有节点（保持批次边界）
                             chunk_nodes = []
+                            chunk_batch_indexes = [
+                                bd["batch_index"] for bd in chunk_batches
+                            ]
                             for bd in chunk_batches:
                                 chunk_nodes.extend(bd["nodes_data"])
                             try:
@@ -774,6 +896,9 @@ class QQSender:
                                     await self.context.send_message(
                                         unified_msg_origin, message_chain
                                     )
+                                for batch_index in chunk_batch_indexes:
+                                    target_successes[batch_index].add(target_session)
+                                self._record_target_success(target_session)
                                 consecutive_failures = 0
                                 logger.info(
                                     f"[QQSender] {node_name} -> {target_session}: "
@@ -783,13 +908,13 @@ class QQSender:
                                 if chunk_idx < total_chunks:
                                     await asyncio.sleep(chunk_delay)
                             except Exception as e:
-                                consecutive_failures += 1
                                 logger.warning(
                                     f"[QQSender] 大合并转发到 {target_session} 失败 "
                                     f"(块 {chunk_idx}): {e}，降级为按批次保守发送"
                                 )
-                                fallback_ok = 0
+                                chunk_failed = False
                                 for batch_data in chunk_batches:
+                                    batch_index = batch_data["batch_index"]
                                     try:
                                         await self._send_processed_batch(
                                             batch_data=batch_data,
@@ -798,19 +923,38 @@ class QQSender:
                                             node_name=node_name,
                                             target_session=target_session,
                                         )
-                                        fallback_ok += 1
+                                        target_successes[batch_index].add(
+                                            target_session
+                                        )
+                                        self._record_target_success(target_session)
                                         await asyncio.sleep(1)
                                     except Exception as e2:
-                                        logger.error(f"[QQSender] 降级批次发送失败: {e2}")
-                                        continue
-                                if fallback_ok:
-                                    logger.info(
-                                        f"[QQSender] 降级发送完成: {fallback_ok}/{len(chunk_batches)} 批"
-                                    )
-                                if consecutive_failures >= 3:
+                                        chunk_failed = True
+                                        target_failures.setdefault(
+                                            batch_index,
+                                            self._classify_send_error(e2),
+                                        )
+                                        self._record_target_failure(
+                                            target_session,
+                                            threshold=target_circuit_fail_threshold,
+                                            cooldown_sec=target_circuit_cooldown_sec,
+                                            now_ts=time.time(),
+                                        )
+                                        logger.error(
+                                            f"[QQSender] 降级批次发送失败: {e2}"
+                                        )
+                                if chunk_failed:
+                                    consecutive_failures += 1
+                                else:
+                                    consecutive_failures = 0
+                                if (
+                                    chunk_failed
+                                    and consecutive_failures >= fail_fast_limit
+                                ):
                                     remaining = sum(
-                                        len(bd["nodes_data"])
-                                        for bd in batch_chunks[chunk_idx:]
+                                        len(batch_data["nodes_data"])
+                                        for chunk in batch_chunks[chunk_idx:]
+                                        for batch_data in chunk
                                     )
                                     logger.warning(
                                         f"[QQSender] 连续 {consecutive_failures} 块失败，"
@@ -820,7 +964,9 @@ class QQSender:
                                 await asyncio.sleep(5)
                     else:
                         # 普通发送（逐个小相册 / 单条）
+                        consecutive_failures = 0
                         for batch_data in processed_batches:
+                            batch_index = batch_data["batch_index"]
                             try:
                                 await self._send_processed_batch(
                                     batch_data=batch_data,
@@ -829,21 +975,60 @@ class QQSender:
                                     node_name=node_name,
                                     target_session=target_session,
                                 )
+                                target_successes[batch_index].add(target_session)
+                                self._record_target_success(target_session)
+                                consecutive_failures = 0
                                 await asyncio.sleep(1)
                             except Exception as e:
+                                consecutive_failures += 1
+                                target_failures.setdefault(
+                                    batch_index,
+                                    self._classify_send_error(e),
+                                )
+                                self._record_target_failure(
+                                    target_session,
+                                    threshold=target_circuit_fail_threshold,
+                                    cooldown_sec=target_circuit_cooldown_sec,
+                                    now_ts=time.time(),
+                                )
                                 logger.error(
                                     f"[QQSender] 转发到 {target_session} 异常: {e}"
                                 )
+                                if consecutive_failures >= fail_fast_limit:
+                                    logger.warning(
+                                        f"[QQSender] 目标 {target_session} 连续失败 {consecutive_failures} 次，停止本目标后续批次"
+                                    )
+                                    break
 
             # 清理文件
             for batch_data in processed_batches:
                 self._cleanup_files(batch_data["local_files"])
 
-    def _cleanup_files(self, files: List[str]):
+        target_count = len(context_target_sessions)
+        acked = tuple(
+            batch_index
+            for batch_index, success_sessions in target_successes.items()
+            if len(success_sessions) == target_count
+        )
+        deferred = tuple(sorted(deferred_batch_indexes))
+        failed = tuple(
+            batch_index
+            for batch_index, success_sessions in target_successes.items()
+            if len(success_sessions) != target_count
+            and batch_index not in deferred_batch_indexes
+        )
+        return QQSendSummary(
+            acked_batch_indexes=acked,
+            failed_batch_indexes=failed,
+            deferred_batch_indexes=deferred,
+            error_types=target_failures,
+        )
+
+    def _cleanup_files(self, files: list[str]):
         """清理临时下载的文件"""
         for f in files:
             if os.path.exists(f):
                 try:
                     os.remove(f)
-                except:
+                except OSError:
                     pass

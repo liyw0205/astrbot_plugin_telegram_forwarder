@@ -1,5 +1,6 @@
 import json
 import os
+
 from astrbot.api import logger
 
 
@@ -7,6 +8,23 @@ class Storage:
     """
     数据持久化管理类
     """
+
+    @staticmethod
+    def _normalize_pending_item(msg: dict) -> dict:
+        return {
+            "id": msg["id"],
+            "time": msg["time"],
+            "grouped_id": msg.get("grouped_id"),
+            "is_cold_start": msg.get("is_cold_start", False),
+            "is_monitored": msg.get("is_monitored", False),
+            "retry_count": msg.get("retry_count", 0),
+            "next_retry_at": msg.get("next_retry_at", 0),
+            "last_error_type": msg.get("last_error_type", ""),
+            "last_error_code": msg.get("last_error_code", ""),
+            "last_attempt_at": msg.get("last_attempt_at", 0),
+            "last_target_session": msg.get("last_target_session", ""),
+            "last_tg_target": msg.get("last_tg_target", ""),
+        }
 
     def __init__(self, data_file: str):
         """
@@ -21,9 +39,9 @@ class Storage:
 
         if os.path.exists(self.data_file):
             try:
-                with open(self.data_file, "r", encoding="utf-8") as f:
+                with open(self.data_file, encoding="utf-8") as f:
                     return json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"[Storage] 无法加载数据文件: {e}，将使用默认配置")
                 return default_data
 
@@ -38,7 +56,7 @@ class Storage:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_file, self.data_file)
-        except IOError as e:
+        except OSError as e:
             logger.error(f"[Storage] 保存数据失败: {e}")
             try:
                 if os.path.exists(tmp_file):
@@ -51,16 +69,16 @@ class Storage:
         if channel_name not in self.persistence["channels"]:
             self.persistence["channels"][channel_name] = {
                 "last_post_id": 0,
-                "channel_id": None, # 记录频道的数字 ID，用于转发查重
-                "pending_queue": []
+                "channel_id": None,  # 记录频道的数字 ID，用于转发查重
+                "pending_queue": [],
             }
-        
+
         if "pending_queue" not in self.persistence["channels"][channel_name]:
             self.persistence["channels"][channel_name]["pending_queue"] = []
-            
+
         if "channel_id" not in self.persistence["channels"][channel_name]:
             self.persistence["channels"][channel_name]["channel_id"] = None
-            
+
         return self.persistence["channels"][channel_name]
 
     def update_channel_id(self, channel_name: str, channel_id: int):
@@ -114,15 +132,7 @@ class Storage:
             if msg_id in existing_ids:
                 continue
 
-            data["pending_queue"].append(
-                {
-                    "id": msg_id,
-                    "time": msg["time"],
-                    "grouped_id": msg.get("grouped_id"),
-                    "is_cold_start": msg.get("is_cold_start", False),
-                    "is_monitored": msg.get("is_monitored", False),
-                }
-            )
+            data["pending_queue"].append(self._normalize_pending_item(msg))
             existing_ids.add(msg_id)
             added_count += 1
 
@@ -141,45 +151,118 @@ class Storage:
         data["pending_queue"] = queue
         self.save()
         if old_len != len(queue):
-            logger.debug(f"[Storage] 更新 {channel_name} 队列长度: {old_len} -> {len(queue)}")
+            logger.debug(
+                f"[Storage] 更新 {channel_name} 队列长度: {old_len} -> {len(queue)}"
+            )
 
     def get_all_pending(self) -> list:
         """获取所有频道的所有待发送消息"""
         all_pending = []
         for channel_name, info in self.persistence.get("channels", {}).items():
             for msg in info.get("pending_queue", []):
-                all_pending.append({
-                    "channel": channel_name,
-                    "id": msg["id"],
-                    "time": msg["time"],
-                    "grouped_id": msg.get("grouped_id"),
-                    "is_cold_start": msg.get("is_cold_start", False),
-                    "is_monitored": msg.get("is_monitored", False),
-                })
+                normalized = self._normalize_pending_item(msg)
+                all_pending.append({"channel": channel_name, **normalized})
         return all_pending
 
     def remove_ids_from_pending(self, channel_name: str, msg_ids: list):
         """从待发送队列中移除指定 ID 的消息"""
         data = self.get_channel_data(channel_name)
         original_len = len(data["pending_queue"])
-        data["pending_queue"] = [m for m in data["pending_queue"] if m["id"] not in msg_ids]
+        data["pending_queue"] = [
+            m for m in data["pending_queue"] if m["id"] not in msg_ids
+        ]
         if len(data["pending_queue"]) != original_len:
             self.save()
-            logger.debug(f"[Storage] 从 {channel_name} 队列移除了 {original_len - len(data['pending_queue'])} 条消息")
+            logger.debug(
+                f"[Storage] 从 {channel_name} 队列移除了 {original_len - len(data['pending_queue'])} 条消息"
+            )
+
+    def mark_pending_retry(
+        self,
+        channel_name: str,
+        msg_ids: list[int],
+        *,
+        error_type: str,
+        target_session: str,
+        base_delay: int,
+        max_delay: int,
+        attempted_at: float,
+    ) -> None:
+        data = self.get_channel_data(channel_name)
+        changed = False
+        for item in data["pending_queue"]:
+            if item["id"] not in msg_ids:
+                continue
+            normalized = self._normalize_pending_item(item)
+            retry_count = normalized["retry_count"] + 1
+            delay = min(base_delay * (2 ** (retry_count - 1)), max_delay)
+            item.update(
+                {
+                    "retry_count": retry_count,
+                    "next_retry_at": attempted_at + delay,
+                    "last_error_type": error_type,
+                    "last_error_code": "",
+                    "last_attempt_at": attempted_at,
+                    "last_target_session": target_session,
+                }
+            )
+            changed = True
+        if changed:
+            self.save()
+
+    def clear_pending_retry(self, channel_name: str, msg_ids: list[int]) -> None:
+        data = self.get_channel_data(channel_name)
+        changed = False
+        for item in data["pending_queue"]:
+            if item["id"] not in msg_ids:
+                continue
+            item.update(
+                {
+                    "retry_count": 0,
+                    "next_retry_at": 0,
+                    "last_error_type": "",
+                    "last_error_code": "",
+                    "last_attempt_at": 0,
+                    "last_target_session": "",
+                    "last_tg_target": "",
+                }
+            )
+            changed = True
+        if changed:
+            self.save()
+
+    def mark_pending_tg_forwarded(
+        self, channel_name: str, msg_ids: list[int], target_channel: str
+    ) -> None:
+        data = self.get_channel_data(channel_name)
+        changed = False
+        for item in data["pending_queue"]:
+            if item["id"] not in msg_ids:
+                continue
+            item["last_tg_target"] = target_channel
+            changed = True
+        if changed:
+            self.save()
 
     def cleanup_expired_pending(self, retention_seconds: int):
         """清理所有频道中过期的消息"""
         import time
+
         now = time.time()
         cleaned_total = 0
         for channel_name, info in self.persistence.get("channels", {}).items():
             old_queue = info.get("pending_queue", [])
             # 冷启动消息不参与过期清理
-            new_queue = [m for m in old_queue if m.get("is_cold_start", False) or (now - m["time"] <= retention_seconds)]
+            new_queue = [
+                m
+                for m in old_queue
+                if m.get("is_cold_start", False)
+                or (now - m["time"] <= retention_seconds)
+            ]
             if len(new_queue) != len(old_queue):
-                cleaned_total += (len(old_queue) - len(new_queue))
+                cleaned_total += len(old_queue) - len(new_queue)
                 info["pending_queue"] = new_queue
-        
+
         if cleaned_total > 0:
             self.save()
             logger.debug(f"[Storage] 全局清理了 {cleaned_total} 条过期消息。")
@@ -195,11 +278,14 @@ class Storage:
             if channel_name not in active_channels:
                 if info.get("last_post_id", 0) != 0:
                     info["last_post_id"] = 0
-                    logger.info(f"[Storage] 频道 {channel_name} 当前未被监控，已重置其 last_post_id 为 0")
+                    logger.info(
+                        f"[Storage] 频道 {channel_name} 当前未被监控，已重置其 last_post_id 为 0"
+                    )
                     changed = True
-        
+
         if changed:
             self.save()
+
     def update_last_id(self, channel_name: str, last_id: int):
         """
         更新频道的最后处理消息ID

@@ -1,5 +1,6 @@
 import re
-from typing import List, Tuple, Callable
+from collections.abc import Callable
+
 from telethon.tl.types import Message
 
 from astrbot.api import logger
@@ -12,8 +13,8 @@ class MessageFilter:
         self.config = config
 
     def filter_messages(
-        self, messages: List[Tuple[str, Message]], logger_func: Callable = None
-    ) -> List[Tuple[str, Message]]:
+        self, messages: list[tuple[str, Message]], logger_func: Callable = None
+    ) -> list[tuple[str, Message]]:
         """
         应用过滤规则，返回过滤后的消息列表
         """

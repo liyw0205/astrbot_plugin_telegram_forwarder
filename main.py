@@ -1,18 +1,19 @@
 import asyncio
+import filecmp
 import os
 import shutil
-import filecmp
 from datetime import datetime, timedelta
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from astrbot.api import logger, star, AstrBotConfig
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api import AstrBotConfig, logger, star
+from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import StarTools
 
 from .common.storage import Storage
 from .core.client import TelegramClientWrapper
-from .core.forwarder import Forwarder
 from .core.commands import PluginCommands
+from .core.forwarder import Forwarder
 
 
 class Main(star.Star):
@@ -30,7 +31,6 @@ class Main(star.Star):
         self.bot = None
         self._runtime_bootstrap_task = None
 
-
         # ========== 设置数据目录 ==========
         self.plugin_data_dir = str(StarTools.get_data_dir())
         if not os.path.exists(self.plugin_data_dir):
@@ -43,15 +43,21 @@ class Main(star.Star):
         session_files = self.config.get("telegram_session", [])
         if session_files and isinstance(session_files, list) and len(session_files) > 0:
             uploaded_session_path = session_files[0]
-            full_uploaded_path = os.path.join(self.plugin_data_dir, uploaded_session_path)
+            full_uploaded_path = os.path.join(
+                self.plugin_data_dir, uploaded_session_path
+            )
 
             if os.path.exists(full_uploaded_path):
-                target_session_path = os.path.join(self.plugin_data_dir, "user_session.session")
-                
+                target_session_path = os.path.join(
+                    self.plugin_data_dir, "user_session.session"
+                )
+
                 should_copy = True
                 if os.path.exists(target_session_path):
                     try:
-                        if filecmp.cmp(full_uploaded_path, target_session_path, shallow=False):
+                        if filecmp.cmp(
+                            full_uploaded_path, target_session_path, shallow=False
+                        ):
                             should_copy = False
                             logger.debug("[Main] 会话文件未变化，跳过同步。")
                     except Exception as e:
@@ -60,30 +66,42 @@ class Main(star.Star):
                 if should_copy:
                     try:
                         shutil.copy2(full_uploaded_path, target_session_path)
-                        logger.debug(f"[Main] 已从上传配置同步会话文件: {target_session_path}")
+                        logger.debug(
+                            f"[Main] 已从上传配置同步会话文件: {target_session_path}"
+                        )
                         # 客户端缓存键使用 user_session（无 .session 后缀）
-                        session_key_path = os.path.join(self.plugin_data_dir, "user_session")
+                        session_key_path = os.path.join(
+                            self.plugin_data_dir, "user_session"
+                        )
                         TelegramClientWrapper.clear_cache(session_key_path)
                         logger.debug("[Main] 会话文件已更新，已清理客户端缓存。")
-                            
+
                     except Exception as e:
                         logger.error(f"[Main] 同步会话文件失败 (可能被占用): {e}")
             else:
-                logger.warning(f"[Main] 配置中的会话文件路径不存在: {full_uploaded_path}")
+                logger.warning(
+                    f"[Main] 配置中的会话文件路径不存在: {full_uploaded_path}"
+                )
 
         # TelegramClientWrapper: 封装 Telegram 客户端连接逻辑
         self.client_wrapper = TelegramClientWrapper(self.config, self.plugin_data_dir)
 
         # Forwarder: 消息转发核心逻辑
         self.forwarder = Forwarder(
-            self.context, self.config, self.storage, self.client_wrapper, self.plugin_data_dir
+            self.context,
+            self.config,
+            self.storage,
+            self.client_wrapper,
+            self.plugin_data_dir,
         )
 
         # ========== 初始化定时任务调度器 ==========
         self.scheduler = AsyncIOScheduler()
 
         # 初始化命令处理器
-        self.command_handler = PluginCommands(context, config, self.forwarder, self.scheduler)
+        self.command_handler = PluginCommands(
+            context, config, self.forwarder, self.scheduler
+        )
 
         # ========== 配置检查警告 ==========
         if not self.config.get("api_id") or not self.config.get("api_hash"):
@@ -99,23 +117,30 @@ class Main(star.Star):
         if self.client_wrapper.client:
             logger.debug("正在尝试连接 Telegram 客户端...")
             await self.client_wrapper.start()
-        
+
         # 检查客户端是否成功连接并授权
         is_authorized = self.client_wrapper.is_authorized()
-        logger.info(f"Telegram 客户端授权状态: {'已授权' if is_authorized else '未授权'}")
+        logger.info(
+            f"Telegram 客户端授权状态: {'已授权' if is_authorized else '未授权'}"
+        )
 
         if is_authorized:
             startup_grace = self.STARTUP_GRACE_SECONDS
 
             if hasattr(self.forwarder, "qq_sender"):
+
                 async def _bootstrap_runtime_later():
                     await asyncio.sleep(startup_grace)
                     try:
                         await self.forwarder.qq_sender.initialize_runtime()
                     except Exception as e:
-                        logger.debug(f"[Main] QQ sender runtime delayed bootstrap failed: {e}")
+                        logger.debug(
+                            f"[Main] QQ sender runtime delayed bootstrap failed: {e}"
+                        )
 
-                self._runtime_bootstrap_task = asyncio.create_task(_bootstrap_runtime_later())
+                self._runtime_bootstrap_task = asyncio.create_task(
+                    _bootstrap_runtime_later()
+                )
 
             # ========== 启动定时调度器 ==========
             # 从全局 forward_config 对象中获取间隔
@@ -131,7 +156,7 @@ class Main(star.Star):
                 seconds=check_interval,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=check_start_time
+                next_run_time=check_start_time,
             )
 
             # 任务 2: 执行发送 (Send)
@@ -142,21 +167,32 @@ class Main(star.Star):
                 seconds=send_interval,
                 max_instances=1,
                 coalesce=True,
-                next_run_time=send_start_time
+                next_run_time=send_start_time,
             )
 
             # 启动调度器
             self.scheduler.start()
 
-            logger.info(f"Telegram Forwarder 已成功启动并激活调度器。")
-            logger.info(f" - 抓取任务: 每 {check_interval}s 执行一次 (首次执行: {check_start_time.strftime('%H:%M:%S')})")
-            logger.info(f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})")
-            source_channels = self.config.get('source_channels', [])
-            channel_names = [c.get('channel_username') for c in source_channels if c.get('channel_username')]
-            logger.info(f"正在监控频道: {', '.join(channel_names) if channel_names else '无'}")
+            logger.info("Telegram Forwarder 已成功启动并激活调度器。")
+            logger.info(
+                f" - 抓取任务: 每 {check_interval}s 执行一次 (首次执行: {check_start_time.strftime('%H:%M:%S')})"
+            )
+            logger.info(
+                f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})"
+            )
+            source_channels = self.config.get("source_channels", [])
+            channel_names = [
+                c.get("channel_username")
+                for c in source_channels
+                if c.get("channel_username")
+            ]
+            logger.info(
+                f"正在监控频道: {', '.join(channel_names) if channel_names else '无'}"
+            )
         else:
-            logger.error("Telegram 客户端未授权，定时任务未启动。请检查 session 文件或 api_id/api_hash。")
-
+            logger.error(
+                "Telegram 客户端未授权，定时任务未启动。请检查 session 文件或 api_id/api_hash。"
+            )
 
     async def terminate(self):
         """插件终止时的清理工作"""
@@ -201,11 +237,14 @@ class Main(star.Star):
             finally:
                 # 无论是否成功断开，都清理缓存，确保下次加载时重新初始化
                 from .core.client import TelegramClientWrapper
+
                 await TelegramClientWrapper.disconnect_and_clear_cache(session_path)
 
         logger.info("Telegram Forwarder 已停止")
 
+
 # ================= COMMANDS =================
+
 
 @filter.command_group("tg")
 @filter.permission_type(filter.PermissionType.ADMIN)
@@ -213,11 +252,13 @@ def tg(self):
     """Telegram Forwarder 插件管理"""
     pass
 
+
 @tg.command("add")
 async def add_channel(self, event: AstrMessageEvent, channel: str):
     """添加监控频道"""
     async for result in self.command_handler.add_channel(event, channel):
         yield result
+
 
 @tg.command("rm")
 async def remove_channel(self, event: AstrMessageEvent, channel: str):
@@ -225,11 +266,13 @@ async def remove_channel(self, event: AstrMessageEvent, channel: str):
     async for result in self.command_handler.remove_channel(event, channel):
         yield result
 
+
 @tg.command("ls")
 async def list_channels(self, event: AstrMessageEvent):
     """列出当前监控频道"""
     async for result in self.command_handler.list_channels(event):
         yield result
+
 
 @tg.command("check")
 async def force_check(self, event: AstrMessageEvent):
@@ -237,11 +280,13 @@ async def force_check(self, event: AstrMessageEvent):
     async for result in self.command_handler.force_check(event):
         yield result
 
+
 @tg.command("status")
 async def status(self, event: AstrMessageEvent):
     """查看插件运行状态"""
     async for result in self.command_handler.show_status(event):
         yield result
+
 
 @tg.command("pause")
 async def pause(self, event: AstrMessageEvent):
@@ -249,11 +294,13 @@ async def pause(self, event: AstrMessageEvent):
     async for result in self.command_handler.pause(event):
         yield result
 
+
 @tg.command("resume")
 async def resume(self, event: AstrMessageEvent):
     """恢复抓取与发送任务"""
     async for result in self.command_handler.resume(event):
         yield result
+
 
 @tg.command("queue")
 async def queue(self, event: AstrMessageEvent):
@@ -261,17 +308,20 @@ async def queue(self, event: AstrMessageEvent):
     async for result in self.command_handler.show_queue(event):
         yield result
 
+
 @tg.command("clearqueue")
 async def clearqueue(self, event: AstrMessageEvent, target: str = None):
     """清空待发送队列"""
     async for result in self.command_handler.clear_queue(event, target):
         yield result
 
+
 @tg.command("get")
 async def get(self, event: AstrMessageEvent, target: str = ""):
     """查看频道配置"""
     async for result in self.command_handler.get_config(event, target):
         yield result
+
 
 @tg.command("set")
 async def set_config(self, event: AstrMessageEvent, args: str = ""):
@@ -281,7 +331,7 @@ async def set_config(self, event: AstrMessageEvent, args: str = ""):
     cmd_text = full_text
     for p in prefix_variants:
         if full_text.lower().startswith(p):
-            cmd_text = full_text[len(p):].strip()
+            cmd_text = full_text[len(p) :].strip()
             break
 
     parts = cmd_text
@@ -297,7 +347,7 @@ async def login(self, event: AstrMessageEvent, args: str = ""):
     cmd_text = full_text
     for p in prefix_variants:
         if full_text.lower().startswith(p):
-            cmd_text = full_text[len(p):].strip()
+            cmd_text = full_text[len(p) :].strip()
             break
 
     async for result in self.command_handler.handle_login(event, cmd_text):

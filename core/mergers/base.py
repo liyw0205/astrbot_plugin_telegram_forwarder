@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, List
+
 from telethon.tl.types import Message
 
 
@@ -11,7 +11,7 @@ class MergeRule(ABC):
 
     @abstractmethod
     def can_merge(
-        self, channel_name: str, msg1: Tuple[str, Message], msg2: Tuple[str, Message]
+        self, channel_name: str, msg1: tuple[str, Message], msg2: tuple[str, Message]
     ) -> bool:
         """
         判断两条消息是否可以合并
@@ -27,7 +27,7 @@ class MergeRule(ABC):
         pass
 
     @abstractmethod
-    def get_group_key(self, msg: Tuple[str, Message]) -> Optional[str]:
+    def get_group_key(self, msg: tuple[str, Message]) -> str | None:
         """
         获取消息的分组 key，用于识别属于同一组的消息
 
@@ -41,7 +41,7 @@ class MergeRule(ABC):
 
     @abstractmethod
     def apply_merge_marker(
-        self, messages: List[Tuple[str, Message]], group_key: str
+        self, messages: list[tuple[str, Message]], group_key: str
     ) -> None:
         """
         为一组关联消息添加合并标记（_merge_group_id）

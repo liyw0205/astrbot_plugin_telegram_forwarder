@@ -1,20 +1,21 @@
 import asyncio
-import json
-import random
 import os
+import random
 from collections import Counter
-from typing import Optional
 from datetime import datetime
+
 from telethon.errors import (
-    SessionPasswordNeededError,
-    PhoneCodeInvalidError,
-    PhoneCodeExpiredError,
     FloodWaitError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    SessionPasswordNeededError,
 )
+
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
-from astrbot.api import AstrBotConfig, logger
-from ..common.text_tools import normalize_telegram_channel_name, is_numeric_channel_id
+
+from ..common.text_tools import is_numeric_channel_id, normalize_telegram_channel_name
 
 
 class PluginCommands:
@@ -28,7 +29,7 @@ class PluginCommands:
         self._paused = False  # 全局暂停标志
         self.temp_data = {}
 
-    def _find_channel_cfg(self, channel_name: str) -> Optional[dict]:
+    def _find_channel_cfg(self, channel_name: str) -> dict | None:
         """根据频道名（忽略大小写）查找对应的配置项，并返回原始配置"""
         channel_name = normalize_telegram_channel_name(channel_name)
         channels = self.config.get("source_channels", [])
@@ -41,7 +42,7 @@ class PluginCommands:
                     return cfg
         return None
 
-    def _get_channel_original_name(self, channel_name: str) -> Optional[str]:
+    def _get_channel_original_name(self, channel_name: str) -> str | None:
         """根据输入（忽略大小写）返回配置文件中存储的原始频道名"""
         cfg = self._find_channel_cfg(channel_name)
         return cfg.get("channel_username") if cfg else None
@@ -70,7 +71,7 @@ class PluginCommands:
     def _login_key(event: AstrMessageEvent) -> str:
         return f"tg_login_{event.session_id}"
 
-    def _get_login_data(self, event: AstrMessageEvent) -> Optional[dict]:
+    def _get_login_data(self, event: AstrMessageEvent) -> dict | None:
         return self.temp_data.get(self._login_key(event))
 
     def _clear_login_data(self, event: AstrMessageEvent):
@@ -546,7 +547,7 @@ class PluginCommands:
 
         yield event.plain_result("\n".join(lines))
 
-    async def clear_queue(self, event: AstrMessageEvent, target: Optional[str] = None):
+    async def clear_queue(self, event: AstrMessageEvent, target: str | None = None):
         """清空待发送队列   用法：/tg clearqueue [频道|all]"""
         if not target:
             yield event.plain_result(
@@ -646,7 +647,6 @@ class PluginCommands:
             return
 
         args = target.strip().split()
-        mode = "normal"
         target_clean = args[0].lstrip("@").strip().lower()
 
         # ─── root 模式 ───
@@ -693,14 +693,12 @@ class PluginCommands:
         if is_global:
             cfg = self.config.get("forward_config", {})
             title = "全局转发配置（forward_config）"
-            target_name = "全局"
         else:
             ch_cfg = self._find_channel_cfg(target_clean)
             if not ch_cfg:
                 yield event.plain_result(f"❌ 未找到频道 @{target_clean}")
                 return
             cfg = ch_cfg
-            target_name = f"频道 @{ch_cfg.get('channel_username')}"
             title = f"频道 @{ch_cfg.get('channel_username')} 配置"
 
         lines = [f"【{title} 概览】", "─────────────"]
@@ -1091,7 +1089,7 @@ class PluginCommands:
 
             summary = f"批量修改完成：成功更新 {modified_count} / {channel_count} 个频道\n字段：{field}\n新值：{value_str}"
             if error_lines:
-                summary += f"\n以下频道失败：\n" + "\n".join(error_lines)
+                summary += "\n以下频道失败：\n" + "\n".join(error_lines)
 
             yield event.plain_result(
                 f"✅ {summary}\n配置已保存。下次调度自动生效，也可 /tg check 立即触发。"
