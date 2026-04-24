@@ -67,6 +67,67 @@ def make_test_dir() -> Path:
     return path
 
 
+def load_main_module(data_dir: Path):
+    root = Path(__file__).resolve().parents[1]
+    module_path = root / "main.py"
+    module_name = "astrbot_plugin_telegram_forwarder.main"
+
+    def command_group(*args, **kwargs):
+        def decorate(func):
+            func.command = lambda *a, **kw: lambda handler: handler
+            return func
+
+        return decorate
+
+    filter_stub = SimpleNamespace(
+        PermissionType=SimpleNamespace(ADMIN="admin"),
+        command_group=command_group,
+        permission_type=lambda *args, **kwargs: lambda func: func,
+    )
+    star_base = type("Star", (), {"__init__": lambda self, *args, **kwargs: None})
+    star_stub = SimpleNamespace(Star=star_base, Context=object)
+    star_tools = SimpleNamespace(get_data_dir=lambda: data_dir)
+    telegram_wrapper = MagicMock()
+
+    stubbed_modules = {
+        "apscheduler": MagicMock(),
+        "apscheduler.schedulers": MagicMock(),
+        "apscheduler.schedulers.asyncio": SimpleNamespace(AsyncIOScheduler=MagicMock()),
+        "astrbot": MagicMock(),
+        "astrbot.api": SimpleNamespace(
+            AstrBotConfig=dict, logger=MagicMock(), star=star_stub
+        ),
+        "astrbot.api.event": SimpleNamespace(
+            AstrMessageEvent=object, filter=filter_stub
+        ),
+        "astrbot.api.star": SimpleNamespace(StarTools=star_tools),
+        "astrbot_plugin_telegram_forwarder": MagicMock(__path__=[]),
+        "astrbot_plugin_telegram_forwarder.common": MagicMock(__path__=[]),
+        "astrbot_plugin_telegram_forwarder.common.storage": SimpleNamespace(
+            Storage=MagicMock()
+        ),
+        "astrbot_plugin_telegram_forwarder.core": MagicMock(__path__=[]),
+        "astrbot_plugin_telegram_forwarder.core.client": SimpleNamespace(
+            TelegramClientWrapper=telegram_wrapper
+        ),
+        "astrbot_plugin_telegram_forwarder.core.commands": SimpleNamespace(
+            PluginCommands=MagicMock()
+        ),
+        "astrbot_plugin_telegram_forwarder.core.forwarder": SimpleNamespace(
+            Forwarder=MagicMock()
+        ),
+    }
+
+    with patch.dict(sys.modules, stubbed_modules):
+        sys.modules.pop(module_name, None)
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        mod = importlib.util.module_from_spec(spec)
+        mod.__package__ = "astrbot_plugin_telegram_forwarder"
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        return mod
+
+
 def test_load_client_module_restores_sys_modules_after_stubbing():
     sentinel_socks = object()
     sentinel_telethon = object()
@@ -88,6 +149,22 @@ def test_load_client_module_restores_sys_modules_after_stubbing():
         assert sys.modules["telethon"] is sentinel_telethon
         assert sys.modules["astrbot"] is sentinel_astrbot
         assert sys.modules["astrbot.api"] is sentinel_api
+
+
+def test_main_rejects_uploaded_session_path_outside_plugin_data_dir():
+    tmp_dir = make_test_dir()
+    outside_file = tmp_dir.parent / f"outside-{tmp_dir.name}.session"
+    outside_file.write_text("external session", encoding="utf-8")
+    try:
+        main_module = load_main_module(tmp_dir)
+
+        main_module.Main(MagicMock(), {"telegram_session": [f"../{outside_file.name}"]})
+
+        assert not (tmp_dir / "user_session.session").exists()
+        main_module.TelegramClientWrapper.clear_cache.assert_not_called()
+    finally:
+        outside_file.unlink(missing_ok=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def test_migrate_legacy_session_schema():
@@ -211,7 +288,9 @@ def test_restore_backup_when_migration_write_fails():
                 return FailingInsertConnection(conn)
             return conn
 
-        with patch.object(client_module.sqlite3, "connect", side_effect=connect_with_failing_insert):
+        with patch.object(
+            client_module.sqlite3, "connect", side_effect=connect_with_failing_insert
+        ):
             try:
                 wrapper._ensure_compatible_session_schema(str(session_path))
             except sqlite3.OperationalError:
@@ -268,10 +347,56 @@ def test_disconnect_and_clear_cache_closes_session_even_when_client_looks_discon
     client_module.get_auth_cache().clear()
     client_module.get_client_cache()[session_path] = cached_client
 
-    asyncio.run(client_module.TelegramClientWrapper.disconnect_and_clear_cache(session_path))
+    asyncio.run(
+        client_module.TelegramClientWrapper.disconnect_and_clear_cache(session_path)
+    )
 
     cached_client.session.close.assert_called()
     assert session_path not in client_module.get_client_cache()
+
+
+def test_init_client_continues_when_session_schema_migration_fails():
+    client_module = load_client_module()
+    tmp_dir = make_test_dir()
+    try:
+        client_module.get_client_cache().clear()
+        with patch.object(
+            client_module.TelegramClientWrapper,
+            "_ensure_compatible_session_schema",
+            side_effect=sqlite3.DatabaseError("broken schema"),
+        ):
+            wrapper = client_module.TelegramClientWrapper(
+                {"api_id": 123, "api_hash": "hash"}, str(tmp_dir)
+            )
+
+        assert wrapper.client is not None
+        assert str(tmp_dir / "user_session") in client_module.get_client_cache()
+        assert "broken schema" not in str(client_module.logger.debug.call_args_list)
+    finally:
+        client_module.get_client_cache().clear()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_redact_proxy_url_hides_credentials():
+    client_module = load_client_module()
+
+    redacted = client_module.TelegramClientWrapper._redact_proxy_url(
+        "socks5://user:secret@example.com:1080"
+    )
+
+    assert redacted == "socks5://***@example.com:1080"
+    assert "user" not in redacted
+    assert "secret" not in redacted
+
+
+def test_redact_proxy_url_preserves_url_without_credentials():
+    client_module = load_client_module()
+
+    redacted = client_module.TelegramClientWrapper._redact_proxy_url(
+        "socks5://example.com:1080"
+    )
+
+    assert redacted == "socks5://example.com:1080"
 
 
 def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_if_still_disconnected():
@@ -290,7 +415,9 @@ def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_i
 
     wrapper.client = old_client
     wrapper._session_path = MagicMock(return_value="synthetic/session/user_session")
-    wrapper._init_client = MagicMock(side_effect=lambda: setattr(wrapper, "client", new_client))
+    wrapper._init_client = MagicMock(
+        side_effect=lambda: setattr(wrapper, "client", new_client)
+    )
 
     with patch.object(
         client_module.TelegramClientWrapper,
@@ -301,7 +428,9 @@ def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_i
 
     assert connected is False
     old_client.connect.assert_awaited_once_with()
-    disconnect_and_clear_cache.assert_awaited_once_with("synthetic/session/user_session")
+    disconnect_and_clear_cache.assert_awaited_once_with(
+        "synthetic/session/user_session"
+    )
     wrapper._init_client.assert_called_once_with()
     new_client.connect.assert_awaited_once_with()
 
@@ -350,7 +479,9 @@ def test_ensure_connected_returns_false_when_second_connect_fails_after_rebuild(
 
     wrapper.client = old_client
     wrapper._session_path = MagicMock(return_value="synthetic/session/user_session")
-    wrapper._init_client = MagicMock(side_effect=lambda: setattr(wrapper, "client", new_client))
+    wrapper._init_client = MagicMock(
+        side_effect=lambda: setattr(wrapper, "client", new_client)
+    )
 
     with patch.object(
         client_module.TelegramClientWrapper,
@@ -360,6 +491,8 @@ def test_ensure_connected_returns_false_when_second_connect_fails_after_rebuild(
         connected = asyncio.run(wrapper.ensure_connected())
 
     assert connected is False
-    disconnect_and_clear_cache.assert_awaited_once_with("synthetic/session/user_session")
+    disconnect_and_clear_cache.assert_awaited_once_with(
+        "synthetic/session/user_session"
+    )
     wrapper._init_client.assert_called_once_with()
     new_client.connect.assert_awaited_once_with()

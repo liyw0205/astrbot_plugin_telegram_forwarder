@@ -21,6 +21,20 @@ class Main(star.Star):
 
     STARTUP_GRACE_SECONDS = 30
 
+    def _resolve_uploaded_session_path(self, uploaded_session_path: str) -> str | None:
+        plugin_dir = os.path.realpath(self.plugin_data_dir)
+        if os.path.isabs(uploaded_session_path):
+            return None
+        candidate = os.path.realpath(os.path.join(plugin_dir, uploaded_session_path))
+        try:
+            if os.path.commonpath([plugin_dir, candidate]) != plugin_dir:
+                return None
+        except ValueError:
+            return None
+        if not candidate.endswith(".session") or not os.path.isfile(candidate):
+            return None
+        return candidate
+
     def __init__(self, context: star.Context, config: AstrBotConfig) -> None:
         """
         插件初始化
@@ -43,11 +57,11 @@ class Main(star.Star):
         session_files = self.config.get("telegram_session", [])
         if session_files and isinstance(session_files, list) and len(session_files) > 0:
             uploaded_session_path = session_files[0]
-            full_uploaded_path = os.path.join(
-                self.plugin_data_dir, uploaded_session_path
+            full_uploaded_path = self._resolve_uploaded_session_path(
+                uploaded_session_path
             )
 
-            if os.path.exists(full_uploaded_path):
+            if full_uploaded_path:
                 target_session_path = os.path.join(
                     self.plugin_data_dir, "user_session.session"
                 )

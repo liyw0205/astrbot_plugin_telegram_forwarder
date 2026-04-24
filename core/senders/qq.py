@@ -1024,11 +1024,30 @@ class QQSender:
             error_types=target_failures,
         )
 
+    def _is_plugin_data_file(self, path: str) -> bool:
+        plugin_data_dir = getattr(self, "plugin_data_dir", None) or getattr(
+            self.downloader, "plugin_data_dir", None
+        )
+        if not plugin_data_dir:
+            return False
+        plugin_entry_dir = os.path.abspath(plugin_data_dir)
+        plugin_real_dir = os.path.realpath(plugin_data_dir)
+        entry_path = os.path.abspath(path)
+        real_path = os.path.realpath(path)
+        try:
+            return (
+                os.path.commonpath([plugin_entry_dir, entry_path]) == plugin_entry_dir
+                and os.path.commonpath([plugin_real_dir, real_path]) == plugin_real_dir
+                and os.path.isfile(entry_path)
+            )
+        except ValueError:
+            return False
+
     def _cleanup_files(self, files: list[str]):
         """清理临时下载的文件"""
         for f in files:
-            if os.path.exists(f):
+            if self._is_plugin_data_file(f):
                 try:
                     os.remove(f)
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"[QQSender] 清理临时文件失败: {f} ({e})")

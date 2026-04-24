@@ -1005,9 +1005,10 @@ class Forwarder:
                 if hasattr(self.storage, "get_channel_data"):
                     channel_data = self.storage.get_channel_data(channel)
                     for pending_item in channel_data.get("pending_queue", []):
-                        if pending_item.get("id") in id_set and pending_item.get(
-                            "last_error_type"
-                        ) != "refetch_miss":
+                        if (
+                            pending_item.get("id") in id_set
+                            and pending_item.get("last_error_type") != "refetch_miss"
+                        ):
                             pending_item["retry_count"] = 0
                     return
                 if hasattr(self.storage, "pending"):
@@ -1040,9 +1041,13 @@ class Forwarder:
                 )
                 next_refetch_miss_count = previous_refetch_miss_count + 1
                 if next_refetch_miss_count >= refetch_miss_max_retries:
-                    refetch_miss_cleaned_by_channel.setdefault(channel, []).append(item_id)
+                    refetch_miss_cleaned_by_channel.setdefault(channel, []).append(
+                        item_id
+                    )
                 else:
-                    refetch_miss_retained_by_channel.setdefault(channel, []).append(item_id)
+                    refetch_miss_retained_by_channel.setdefault(channel, []).append(
+                        item_id
+                    )
 
             if not final_batches:
                 if all_processed_meta:
@@ -1212,6 +1217,24 @@ class Forwarder:
                             meta["ids"],
                             error_type=removable_summary.error_types.get(
                                 index, "send_failed"
+                            ),
+                            target_session=meta.get("target_session", ""),
+                            base_delay=global_cfg.get(
+                                "pending_retry_base_delay_sec", 60
+                            ),
+                            max_delay=global_cfg.get(
+                                "pending_retry_max_delay_sec", 1800
+                            ),
+                            attempted_at=attempted_at,
+                        )
+
+                    for index in removable_summary.deferred_batch_indexes:
+                        meta = batch_meta[index]
+                        self.storage.mark_pending_retry(
+                            meta["channel"],
+                            meta["ids"],
+                            error_type=removable_summary.error_types.get(
+                                index, "deferred"
                             ),
                             target_session=meta.get("target_session", ""),
                             base_delay=global_cfg.get(

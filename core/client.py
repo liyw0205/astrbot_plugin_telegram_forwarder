@@ -3,7 +3,7 @@ import os
 import shutil
 import sqlite3
 import sys
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import socks
 from telethon import TelegramClient
@@ -38,6 +38,25 @@ class TelegramClientWrapper:
     def _is_wrong_session_error(exc: Exception) -> bool:
         error_text = f"{exc!r} {exc}".casefold()
         return "wrong session id" in error_text
+
+    @staticmethod
+    def _redact_proxy_url(proxy_url: str) -> str:
+        parsed = urlparse(proxy_url)
+        if not parsed.username and not parsed.password:
+            return proxy_url
+        host = parsed.hostname or ""
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        return urlunparse(
+            (
+                parsed.scheme,
+                f"***@{host}",
+                parsed.path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
 
     def __init__(self, config: AstrBotConfig, plugin_data_dir: str):
         """
@@ -223,7 +242,12 @@ class TelegramClientWrapper:
             # 会话文件路径：存储登录状态和缓存
             # 使用 .session 扩展名，Telethon 会自动添加
             session_path = self._session_path()
-            self._ensure_compatible_session_schema(session_path)
+            try:
+                self._ensure_compatible_session_schema(session_path)
+            except Exception as e:
+                logger.warning(
+                    f"[Client] 会话 schema 自愈失败，继续尝试启动: {e}", exc_info=True
+                )
 
             # ========== 检查缓存 ==========
             cache = get_client_cache()
@@ -254,7 +278,9 @@ class TelegramClientWrapper:
                         socks.HTTP if parsed.scheme.startswith("http") else socks.SOCKS5
                     )
                     proxy_setting = (proxy_type, parsed.hostname, parsed.port)
-                    logger.debug(f"[Client] 使用代理: {proxy_url}")
+                    logger.debug(
+                        f"[Client] 使用代理: {self._redact_proxy_url(proxy_url)}"
+                    )
                 except (ValueError, AttributeError) as e:
                     logger.error(f"[Client] 代理 URL 格式错误: {e}")
 

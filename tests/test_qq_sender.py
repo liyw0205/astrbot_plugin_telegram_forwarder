@@ -1,5 +1,8 @@
 """Tests for QQSender helper behavior."""
 
+import shutil
+import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -582,6 +585,73 @@ class TestTargetCircuitBreaker:
 
         sender.context.send_message.assert_not_awaited()
         assert summary.deferred_batch_indexes == (0,)
+
+
+class TestCleanupFiles:
+    def test_cleanup_files_removes_only_files_under_plugin_data_dir(self, sender):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"qq-cleanup-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        safe_file = plugin_data_dir / "download.bin"
+        unsafe_file = root / f"unsafe-{plugin_data_dir.name}.bin"
+        safe_file.write_text("safe", encoding="utf-8")
+        unsafe_file.write_text("unsafe", encoding="utf-8")
+        sender.plugin_data_dir = str(plugin_data_dir)
+
+        try:
+            sender._cleanup_files([str(safe_file), str(unsafe_file)])
+
+            assert not safe_file.exists()
+            assert unsafe_file.exists()
+        finally:
+            unsafe_file.unlink(missing_ok=True)
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
+
+    def test_cleanup_files_does_not_remove_external_symlink_to_plugin_file(
+        self, sender
+    ):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"qq-cleanup-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        safe_file = plugin_data_dir / "download.bin"
+        external_link = root / f"external-link-{plugin_data_dir.name}.bin"
+        safe_file.write_text("safe", encoding="utf-8")
+        sender.plugin_data_dir = str(plugin_data_dir)
+
+        try:
+            try:
+                external_link.symlink_to(safe_file)
+            except OSError as exc:
+                pytest.skip(f"symlink creation is unavailable: {exc}")
+
+            sender._cleanup_files([str(external_link)])
+
+            assert external_link.exists()
+            assert safe_file.exists()
+        finally:
+            external_link.unlink(missing_ok=True)
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
+
+    def test_cleanup_files_logs_remove_failure(self, sender, qq_module, monkeypatch):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"qq-cleanup-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        safe_file = plugin_data_dir / "download.bin"
+        safe_file.write_text("safe", encoding="utf-8")
+        sender.plugin_data_dir = str(plugin_data_dir)
+
+        remove_error = OSError("locked")
+        monkeypatch.setattr("os.remove", MagicMock(side_effect=remove_error))
+
+        try:
+            sender._cleanup_files([str(safe_file)])
+
+            qq_module.logger.warning.assert_called()
+        finally:
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
 
 
 class TestTargetLevelFailFast:

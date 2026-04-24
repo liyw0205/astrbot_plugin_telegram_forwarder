@@ -371,6 +371,58 @@ async def test_send_pending_removes_only_acked_batches_in_strict_mode():
 
 
 @pytest.mark.asyncio
+async def test_send_pending_marks_deferred_batches_for_retry_when_strict_ack_enabled():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 111,
+                "time": 2,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+            {
+                "channel": "demo",
+                "id": 112,
+                "time": 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["forward_config"].update(
+        {
+            "pending_retry_base_delay_sec": 30,
+            "pending_retry_max_delay_sec": 300,
+        }
+    )
+    forwarder._send_sorted_messages_in_batches = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(1,),
+            error_types={1: "circuit_open"},
+        )
+    )
+
+    await forwarder.send_pending_messages()
+
+    assert storage.removed == [("demo", [111])]
+    assert [item["id"] for item in storage.pending] == [112]
+    assert len(storage.retry_updates) == 1
+    channel, ids, retry_kwargs = storage.retry_updates[0]
+    assert channel == "demo"
+    assert ids == [112]
+    assert retry_kwargs["error_type"] == "circuit_open"
+    assert retry_kwargs["target_session"] == "test:GroupMessage:1"
+    assert storage.pending[0]["next_retry_at"] == retry_kwargs["attempted_at"] + 30
+
+
+@pytest.mark.asyncio
 async def test_send_pending_keeps_legacy_remove_behavior_when_strict_ack_disabled():
     forwarder_module = load_forwarder_module()
     storage = FakeStorage(
