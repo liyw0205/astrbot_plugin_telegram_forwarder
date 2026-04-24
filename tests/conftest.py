@@ -1,8 +1,8 @@
-"""测试 conftest — 通过拦截 import 直接加载 qq.py 避免相对导入问题。"""
+"""测试 conftest — 通过包路径注册直接加载 qq.py。"""
+
 import asyncio
-import builtins
-import inspect
 import importlib.util
+import inspect
 import os
 import sys
 from unittest.mock import MagicMock
@@ -27,11 +27,11 @@ def pytest_pyfunc_call(pyfuncitem):
         return None
 
     testargs = {
-        arg: pyfuncitem.funcargs[arg]
-        for arg in pyfuncitem._fixtureinfo.argnames
+        arg: pyfuncitem.funcargs[arg] for arg in pyfuncitem._fixtureinfo.argnames
     }
     asyncio.run(testfunction(**testargs))
     return True
+
 
 # ─── Mock qq.py 的所有顶层 import 依赖 ───
 
@@ -63,19 +63,28 @@ def _make_comp(name):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    cls = type(name, (), {
-        "__init__": _init,
-        "fromFileSystem": classmethod(lambda cls2, p: cls2(p)),
-    })
+    cls = type(
+        name,
+        (),
+        {
+            "__init__": _init,
+            "fromFileSystem": classmethod(lambda cls2, p: cls2(p)),
+        },
+    )
     return cls
 
 
 sys.modules["astrbot"] = MagicMock()
-sys.modules["astrbot.api"] = MagicMock(logger=mock_logger, AstrBotConfig=dict, star=mock_star)
+sys.modules["astrbot.api"] = MagicMock(
+    logger=mock_logger, AstrBotConfig=dict, star=mock_star
+)
 sys.modules["astrbot.api.star"] = mock_star
 sys.modules["astrbot.api.event"] = MagicMock(MessageChain=_make_comp("MessageChain"))
 sys.modules["astrbot.api.message_components"] = MagicMock(
-    **{n: _make_comp(n) for n in ["Plain", "Image", "Record", "Video", "File", "Node", "Nodes"]}
+    **{
+        n: _make_comp(n)
+        for n in ["Plain", "Image", "Record", "Video", "File", "Node", "Nodes"]
+    }
 )
 
 # astrbot.core.utils.path_util
@@ -90,87 +99,76 @@ sys.modules["astrbot.core.utils.path_util"] = mock_path_util
 mock_text_tools = MagicMock()
 mock_text_tools.clean_telegram_text = lambda text, **kw: text
 mock_text_tools.is_numeric_channel_id = lambda s: str(s).lstrip("-").isdigit()
-mock_text_tools.to_telethon_entity = lambda s: int(s) if str(s).lstrip("-").isdigit() else s
+mock_text_tools.to_telethon_entity = lambda s: (
+    int(s) if str(s).lstrip("-").isdigit() else s
+)
 
 mock_downloader = MagicMock()
 mock_downloader.MediaDownloader = type("MediaDownloader", (), {})
 
 # 注册为 qq.py 相对导入能解析到的包路径
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _pkg = "astrbot_plugin_telegram_forwarder"
-sys.modules[_pkg] = MagicMock()
-sys.modules[f"{_pkg}.core"] = MagicMock()
-sys.modules[f"{_pkg}.core.senders"] = MagicMock()
-sys.modules[f"{_pkg}.core.senders.qq"] = MagicMock()
-sys.modules[f"{_pkg}.common"] = MagicMock()
-sys.modules[f"{_pkg}.common.text_tools"] = mock_text_tools
-sys.modules[f"{_pkg}.core.downloader"] = mock_downloader
+
+
+def _is_plugin_module(name: str) -> bool:
+    return name == _pkg or name.startswith(f"{_pkg}.")
+
+
+def _register_mock_package_tree():
+    previous_modules = {
+        name: module for name, module in sys.modules.items() if _is_plugin_module(name)
+    }
+
+    pkg_module = type(sys)(_pkg)
+    pkg_module.__path__ = [_repo_root]
+    sys.modules[_pkg] = pkg_module
+
+    core_module = type(sys)(f"{_pkg}.core")
+    core_module.__path__ = [os.path.join(_repo_root, "core")]
+    sys.modules[f"{_pkg}.core"] = core_module
+
+    senders_module = type(sys)(f"{_pkg}.core.senders")
+    senders_module.__path__ = [os.path.join(_repo_root, "core", "senders")]
+    sys.modules[f"{_pkg}.core.senders"] = senders_module
+
+    sys.modules[f"{_pkg}.core.senders.qq"] = MagicMock()
+
+    common_module = type(sys)(f"{_pkg}.common")
+    common_module.__path__ = [os.path.join(_repo_root, "common")]
+    sys.modules[f"{_pkg}.common"] = common_module
+
+    sys.modules[f"{_pkg}.common.text_tools"] = mock_text_tools
+    sys.modules[f"{_pkg}.core.downloader"] = mock_downloader
+    return previous_modules
+
+
+def _restore_mock_package_tree(previous_modules):
+    for name in list(sys.modules):
+        if _is_plugin_module(name):
+            sys.modules.pop(name, None)
+    sys.modules.update(previous_modules)
+
 
 # ─── qq.py 源文件路径 ───
 
-_qq_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "core", "senders", "qq.py",
-)
-
-# 记录真实 import，以便在 patch 内回调
-_real_import = builtins.__import__
-
-
-def _patched_import(name, globals=None, locals=None, fromlist=(), level=0):
-    """拦截相对导入，将 ...common.text_tools 和 ..downloader 重定向到 mock 模块。"""
-    if level > 0 and globals is not None:
-        # 相对导入：根据 level 计算绝对包名
-        package = globals.get("__package__", "") or ""
-        if level >= 2 and package:
-            parts = package.rsplit(".", level - 1)
-            base = parts[0] if len(parts) > 1 else package
-        else:
-            base = package
-
-        # 尝试拼出目标绝对名
-        if fromlist:
-            # from ...common.text_tools import X  → name 为空, fromlist 非空
-            resolved = name  # 相对导入时 name 可能为空
-            if not resolved:
-                # 根据层级往上走
-                pkg_parts = package.split(".") if package else []
-                # level=3 表示往上3层
-                if len(pkg_parts) >= level:
-                    base_parts = pkg_parts[: len(pkg_parts) - level + 1]
-                else:
-                    base_parts = []
-                # 但 fromlist 包含的模块名需要拼回去
-                # 这种情况交给真实 import（让 __package__ 生效）
-                pass
-
-        # 对于我们的 mock 包，直接重定向
-        if "common.text_tools" in (name or "") or "text_tools" in (fromlist or []):
-            return mock_text_tools
-        if "downloader" in (name or "") or "downloader" in (fromlist or []):
-            return mock_downloader
-
-    return _real_import(name, globals, locals, fromlist, level)
+_qq_path = os.path.join(_repo_root, "core", "senders", "qq.py")
 
 
 def load_qq_module():
-    """加载 qq.py 为独立模块（绕过相对导入）。"""
-    import types
-
+    """加载 qq.py 为独立模块。"""
+    previous_modules = _register_mock_package_tree()
     spec = importlib.util.spec_from_file_location(
         "astrbot_plugin_telegram_forwarder.core.senders.qq",
         _qq_path,
-        submodule_search_locations=[],
     )
     mod = importlib.util.module_from_spec(spec)
-    # 设置 __package__ 让相对导入有基础路径
     mod.__package__ = "astrbot_plugin_telegram_forwarder.core.senders"
 
-    # 拦截 import
-    builtins.__import__ = _patched_import
     try:
         spec.loader.exec_module(mod)
     finally:
-        builtins.__import__ = _real_import
+        _restore_mock_package_tree(previous_modules)
 
     return mod
 

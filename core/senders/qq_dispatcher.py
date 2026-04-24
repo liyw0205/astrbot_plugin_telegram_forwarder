@@ -1,0 +1,357 @@
+"""QQ processed-batch dispatch helpers for target sends."""
+
+import asyncio
+import os
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Protocol
+
+from astrbot.api import logger
+from astrbot.api.event import MessageChain
+from astrbot.api.message_components import File, Node, Nodes, Record, Video
+
+from .qq_batch_builder import ProcessedBatchData
+
+
+class SendProcessedBatchFn(Protocol):
+    """Callable that sends one processed batch."""
+
+    def __call__(
+        self,
+        *,
+        batch_data: ProcessedBatchData,
+        unified_msg_origin: str,
+        self_id: int,
+        node_name: str,
+        target_session: str,
+    ) -> Awaitable[None]: ...
+
+
+class RecordTargetFailureFn(Protocol):
+    """Callable that records one target dispatch failure."""
+
+    def __call__(
+        self,
+        target_session: str,
+        *,
+        threshold: int,
+        cooldown_sec: int,
+        now_ts: float,
+    ) -> None: ...
+
+
+class MessageContext(Protocol):
+    """Context object capable of sending message chains."""
+
+    async def send_message(
+        self, unified_msg_origin: str, message_chain: MessageChain
+    ) -> None: ...
+
+
+@dataclass
+class DispatchResult:
+    target_successes: dict[int, set[str]]
+    target_failures: dict[int, str]
+    deferred_batch_indexes: set[int]
+
+
+async def dispatch_processed_batches_to_targets(
+    *,
+    context_target_sessions: list[str],
+    real_batches: list[list[object]],
+    processed_batches: list[ProcessedBatchData],
+    target_successes: dict[int, set[str]],
+    target_failures: dict[int, str],
+    deferred_batch_indexes: set[int],
+    use_big_merge: bool,
+    is_mixed_big_merge: bool,
+    forward_cfg: dict,
+    self_id: int,
+    node_name: str,
+    get_lock: Callable[[str], asyncio.Lock],
+    target_is_open: Callable[[str, float], bool],
+    record_target_success: Callable[[str], None],
+    record_target_failure: RecordTargetFailureFn,
+    classify_send_error: Callable[[Exception], str],
+    send_processed_batch_fn: SendProcessedBatchFn,
+    send_message_fn: Callable[[str, MessageChain], Awaitable[None]],
+    fail_fast_limit: int,
+    target_circuit_fail_threshold: int,
+    target_circuit_cooldown_sec: int,
+) -> DispatchResult:
+    """Dispatch prepared batches to each QQ target session."""
+
+    for target_session in context_target_sessions:
+        if not target_session:
+            continue
+        lock = get_lock(target_session)
+        async with lock:
+            now_ts = time.time()
+            if target_is_open(target_session, now_ts):
+                logger.warning(
+                    f"[QQSender] 目标 {target_session} 熔断冷却中，跳过本轮发送"
+                )
+                deferred_batch_indexes.update(range(len(real_batches)))
+                continue
+
+            unified_msg_origin = target_session
+
+            if use_big_merge or is_mixed_big_merge:
+                # ─── 大合并（包括混合模式） ───
+                # 按批次边界拆块，避免同一组图片/album 被拆到不同块
+                chunk_size = forward_cfg.get("qq_merge_chunk_size", 5)
+                chunk_delay = forward_cfg.get("qq_merge_chunk_delay", 3)
+
+                batch_chunks: list[list[ProcessedBatchData]] = []
+                current_chunk_batches: list[ProcessedBatchData] = []
+                current_chunk_nodes = 0
+                for batch_data in processed_batches:
+                    batch_node_count = len(batch_data["nodes_data"])
+                    if (
+                        current_chunk_nodes + batch_node_count > chunk_size
+                        and current_chunk_batches
+                    ):
+                        batch_chunks.append(current_chunk_batches)
+                        current_chunk_batches = []
+                        current_chunk_nodes = 0
+                    current_chunk_batches.append(batch_data)
+                    current_chunk_nodes += batch_node_count
+                if current_chunk_batches:
+                    batch_chunks.append(current_chunk_batches)
+
+                total_chunks = len(batch_chunks)
+                consecutive_failures = 0
+                for chunk_idx, chunk_batches in enumerate(batch_chunks, 1):
+                    chunk_nodes = []
+                    chunk_batch_indexes = [bd["batch_index"] for bd in chunk_batches]
+                    for bd in chunk_batches:
+                        chunk_nodes.extend(bd["nodes_data"])
+                    try:
+                        if len(chunk_nodes) > 1:
+                            nodes_list = [
+                                Node(uin=self_id, name=node_name, content=nc)
+                                for nc in chunk_nodes
+                            ]
+                            message_chain = MessageChain()
+                            message_chain.chain.append(Nodes(nodes_list))
+                            await send_message_fn(unified_msg_origin, message_chain)
+                        else:
+                            components = chunk_nodes[0]
+                            message_chain = MessageChain()
+                            message_chain.chain.extend(components)
+                            await send_message_fn(unified_msg_origin, message_chain)
+                        for batch_index in chunk_batch_indexes:
+                            target_successes[batch_index].add(target_session)
+                        record_target_success(target_session)
+                        consecutive_failures = 0
+                        logger.info(
+                            f"[QQSender] {node_name} -> {target_session}: "
+                            f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
+                            f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
+                        )
+                        if chunk_idx < total_chunks:
+                            await asyncio.sleep(chunk_delay)
+                    except Exception as e:
+                        logger.warning(
+                            f"[QQSender] 大合并转发到 {target_session} 失败 "
+                            f"(块 {chunk_idx}): {e}，降级为按批次保守发送"
+                        )
+                        chunk_failed = False
+                        for batch_data in chunk_batches:
+                            batch_index = batch_data["batch_index"]
+                            try:
+                                await send_processed_batch_fn(
+                                    batch_data=batch_data,
+                                    unified_msg_origin=unified_msg_origin,
+                                    self_id=self_id,
+                                    node_name=node_name,
+                                    target_session=target_session,
+                                )
+                                target_successes[batch_index].add(target_session)
+                                record_target_success(target_session)
+                                await asyncio.sleep(1)
+                            except Exception as e2:
+                                chunk_failed = True
+                                target_failures.setdefault(
+                                    batch_index,
+                                    classify_send_error(e2),
+                                )
+                                record_target_failure(
+                                    target_session,
+                                    threshold=target_circuit_fail_threshold,
+                                    cooldown_sec=target_circuit_cooldown_sec,
+                                    now_ts=time.time(),
+                                )
+                                logger.error(f"[QQSender] 降级批次发送失败: {e2}")
+                        if chunk_failed:
+                            consecutive_failures += 1
+                        else:
+                            consecutive_failures = 0
+                        if chunk_failed and consecutive_failures >= fail_fast_limit:
+                            remaining = sum(
+                                len(batch_data["nodes_data"])
+                                for chunk in batch_chunks[chunk_idx:]
+                                for batch_data in chunk
+                            )
+                            logger.warning(
+                                f"[QQSender] 连续 {consecutive_failures} 块失败，"
+                                f"停止本目标剩余 {remaining} 个节点"
+                            )
+                            break
+                        await asyncio.sleep(5)
+            else:
+                # 普通发送（逐个小相册 / 单条）
+                consecutive_failures = 0
+                for batch_data in processed_batches:
+                    batch_index = batch_data["batch_index"]
+                    try:
+                        await send_processed_batch_fn(
+                            batch_data=batch_data,
+                            unified_msg_origin=unified_msg_origin,
+                            self_id=self_id,
+                            node_name=node_name,
+                            target_session=target_session,
+                        )
+                        target_successes[batch_index].add(target_session)
+                        record_target_success(target_session)
+                        consecutive_failures = 0
+                        await asyncio.sleep(1)
+                    except Exception as e:
+                        consecutive_failures += 1
+                        target_failures.setdefault(
+                            batch_index,
+                            classify_send_error(e),
+                        )
+                        record_target_failure(
+                            target_session,
+                            threshold=target_circuit_fail_threshold,
+                            cooldown_sec=target_circuit_cooldown_sec,
+                            now_ts=time.time(),
+                        )
+                        logger.error(f"[QQSender] 转发到 {target_session} 异常: {e}")
+                        if consecutive_failures >= fail_fast_limit:
+                            logger.warning(
+                                f"[QQSender] 目标 {target_session} 连续失败 {consecutive_failures} 次，停止本目标后续批次"
+                            )
+                            break
+
+    return DispatchResult(
+        target_successes=target_successes,
+        target_failures=target_failures,
+        deferred_batch_indexes=deferred_batch_indexes,
+    )
+
+
+async def send_processed_batch(
+    *,
+    batch_data: ProcessedBatchData,
+    unified_msg_origin: str,
+    self_id: int,
+    node_name: str,
+    target_session: str,
+    context: MessageContext,
+    map_path: Callable[[str], str],
+    should_merge: Callable[[ProcessedBatchData], bool],
+) -> None:
+    """Send one prepared QQ batch to a single target session."""
+
+    def normalize_file_payload(component: File) -> File:
+        if getattr(component, "file", None):
+            return component
+        compat_file = getattr(component, "file_", None)
+        if compat_file:
+            normalized = File(file=compat_file, name=getattr(component, "name", None))
+            if getattr(component, "file_", None) is not None:
+                setattr(normalized, "file_", component.file_)
+            return normalized
+        return component
+
+    def log_file_payload(component: File) -> None:
+        logger.info(
+            f"[QQSender] File payload -> {target_session}: "
+            f"file={getattr(component, 'file', None)!r}, "
+            f"file_={getattr(component, 'file_', None)!r}, "
+            f"url={getattr(component, 'url', None)!r}, "
+            f"name={getattr(component, 'name', None)!r}"
+        )
+
+    all_nodes_data = batch_data["nodes_data"]
+    if should_merge(batch_data):
+        message_chain = MessageChain()
+        nodes_list = [
+            Node(uin=self_id, name=node_name, content=nc) for nc in all_nodes_data
+        ]
+        message_chain.chain.append(Nodes(nodes_list))
+        await context.send_message(unified_msg_origin, message_chain)
+        logger.info(
+            f"[QQSender] {node_name} -> {target_session}: 相册合并 ({len(all_nodes_data)} 节点)"
+        )
+        return
+
+    if batch_data.get("contains_audio"):
+        for node_components in all_nodes_data:
+            common_components = []
+            for component in node_components:
+                if isinstance(component, Record):
+                    chain = MessageChain([component])
+                    await context.send_message(unified_msg_origin, chain)
+                    path = getattr(component, "path", None)
+                    if path:
+                        mapped = map_path(path)
+                        file_component = File(
+                            file=mapped,
+                            url="",
+                            name=os.path.basename(path),
+                        )
+                        log_file_payload(file_component)
+                        file_chain = MessageChain([file_component])
+                        await context.send_message(unified_msg_origin, file_chain)
+                else:
+                    if isinstance(component, File):
+                        component = normalize_file_payload(component)
+                    common_components.append(component)
+            if common_components:
+                chain = MessageChain()
+                chain.chain.extend(common_components)
+                await context.send_message(unified_msg_origin, chain)
+        logger.info(
+            f"[QQSender] {node_name} -> {target_session}: 单条消息 (音频已拆分补文件)"
+        )
+        return
+
+    special_types = (Record, File, Video)
+    batch_has_special = False
+    for node_components in all_nodes_data:
+        component_types = [type(component).__name__ for component in node_components]
+        logger.debug(f"[QQSender] target={target_session} node_types={component_types}")
+        has_special = any(isinstance(c, special_types) for c in node_components)
+        if has_special:
+            batch_has_special = True
+            for c in node_components:
+                if isinstance(c, special_types):
+                    if isinstance(c, File):
+                        c = normalize_file_payload(c)
+                        log_file_payload(c)
+                    chain = MessageChain([c])
+                    await context.send_message(unified_msg_origin, chain)
+            common_components = [
+                c for c in node_components if not isinstance(c, special_types)
+            ]
+            if common_components:
+                chain = MessageChain()
+                chain.chain.extend(common_components)
+                await context.send_message(unified_msg_origin, chain)
+            continue
+
+        message_chain = MessageChain()
+        message_chain.chain.extend(node_components)
+        await context.send_message(unified_msg_origin, message_chain)
+
+    if batch_has_special:
+        logger.info(
+            f"[QQSender] {node_name} -> {target_session}: 单条消息 (已拆分特殊媒体)"
+        )
+        return
+
+    logger.info(f"[QQSender] {node_name} -> {target_session}: 单条普通消息")
