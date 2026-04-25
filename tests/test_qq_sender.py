@@ -663,10 +663,48 @@ class TestSendHelperExtraction:
         assert strip_links is False
         assert exclude_text_on_media is True
 
-    def test_build_send_summary_preserves_ack_failed_deferred_semantics(
-        self, sender, qq_module
+    def test_module_export_resolve_text_processing_options_for_mixed_channels(
+        self, qq_module
     ):
-        summary = sender._build_send_summary(
+        config = {
+            "forward_config": {
+                "strip_markdown_links": True,
+                "exclude_text_on_media": False,
+            }
+        }
+        effective_cfg = {
+            "strip_markdown_links": False,
+            "exclude_text_on_media": True,
+        }
+
+        strip_links, exclude_text_on_media = qq_module.resolve_text_processing_options(
+            config,
+            effective_cfg,
+            ["channel-a", "channel-b"],
+        )
+
+        assert strip_links is True
+        assert exclude_text_on_media is False
+
+    def test_module_export_resolve_send_limits(self, qq_module):
+        assert qq_module.resolve_send_limits(
+            {
+                "qq_target_fail_fast_consecutive_failures": "0",
+                "target_circuit_fail_threshold": "2",
+                "target_circuit_cooldown_sec": None,
+            }
+        ) == (1, 2, 300)
+
+    def test_module_export_flatten_batches(self, qq_module):
+        batches = [["a"], [["b"], ["c"]], ["d"]]
+
+        assert qq_module.flatten_batches(batches) == [["a"], ["b"], ["c"], ["d"]]
+
+    def test_module_export_build_send_summary_preserves_ack_failed_deferred_semantics(
+        self, qq_module
+    ):
+        summary = qq_module.build_send_summary(
+            qq_module.QQSendSummary,
             context_target_sessions=["test:GroupMessage:1", "test:GroupMessage:2"],
             target_successes={
                 0: {"test:GroupMessage:1", "test:GroupMessage:2"},
@@ -682,6 +720,34 @@ class TestSendHelperExtraction:
         assert summary.failed_batch_indexes == (1,)
         assert summary.deferred_batch_indexes == (2,)
         assert summary.error_types == {1: "timeout", 2: "circuit_open"}
+
+    def test_module_export_collect_processed_batch_local_files(self, qq_module):
+        processed_batches = [
+            {
+                "batch_index": 0,
+                "nodes_data": [],
+                "local_files": ["/tmp/a.jpg", "/tmp/b.mp4"],
+                "contains_audio": False,
+            },
+            {
+                "batch_index": 1,
+                "nodes_data": [],
+                "local_files": ["/tmp/c.ogg"],
+                "contains_audio": True,
+            },
+            {
+                "batch_index": 2,
+                "nodes_data": [],
+                "local_files": [],
+                "contains_audio": False,
+            },
+        ]
+
+        assert qq_module.collect_processed_batch_local_files(processed_batches) == [
+            "/tmp/a.jpg",
+            "/tmp/b.mp4",
+            "/tmp/c.ogg",
+        ]
 
 
 class TestDispatchLoopExtraction:

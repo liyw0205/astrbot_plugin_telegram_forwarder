@@ -40,6 +40,18 @@ from .qq_reply_preview import (
     reply_media_label,
 )
 from .qq_runtime import get_platform_bot, get_platform_instances, select_qq_platform
+from .qq_send_prep import (
+    flatten_batches,
+    normalize_qq_targets,
+    positive_int,
+    resolve_qq_targets,
+    resolve_send_limits,
+    resolve_text_processing_options,
+)
+from .qq_send_summary import (
+    build_send_summary,
+    collect_processed_batch_local_files,
+)
 from .qq_targets import (
     classify_send_error,
     dedupe_keep_order,
@@ -253,28 +265,18 @@ class QQSender:
         effective_cfg: dict[str, object],
         involved_channels: list[str] | None,
     ) -> tuple[bool, bool]:
-        if involved_channels and len(involved_channels) > 1:
-            global_cfg = self.config.get("forward_config", {})
-            strip_links = global_cfg.get("strip_markdown_links", False)
-            exclude_text_on_media = global_cfg.get("exclude_text_on_media", False)
-        else:
-            exclude_text_on_media = effective_cfg.get("exclude_text_on_media", False)
-            strip_links = effective_cfg.get("strip_markdown_links", False)
-        return bool(strip_links), bool(exclude_text_on_media)
+        return resolve_text_processing_options(
+            self.config,
+            effective_cfg,
+            involved_channels,
+        )
 
     def _resolve_qq_targets(self, effective_cfg: dict[str, object]) -> object:
-        channel_specific_targets = effective_cfg.get("effective_target_qq_sessions", [])
-        if channel_specific_targets:
-            return channel_specific_targets
-        return self.config.get("target_qq_session", [])
+        return resolve_qq_targets(self.config, effective_cfg)
 
     @staticmethod
     def _normalize_qq_targets(qq_targets: object) -> list | None:
-        if isinstance(qq_targets, int):
-            return [qq_targets]
-        if isinstance(qq_targets, list):
-            return qq_targets
-        return None
+        return normalize_qq_targets(qq_targets)
 
     def _resolve_context_target_sessions(self, qq_targets: list) -> list[str]:
         session_targets_cfg, numeric_group_ids = self._split_qq_targets(qq_targets)
@@ -296,45 +298,16 @@ class QQSender:
 
     @staticmethod
     def _positive_int(value: object, default: int) -> int:
-        try:
-            resolved = int(value)
-        except (TypeError, ValueError):
-            resolved = default
-        if resolved < 1:
-            return 1
-        return resolved
+        return positive_int(value, default)
 
     def _resolve_send_limits(
         self, forward_cfg: dict[str, object]
     ) -> tuple[int, int, int]:
-        fail_fast_limit = self._positive_int(
-            forward_cfg.get("qq_target_fail_fast_consecutive_failures", 3), 3
-        )
-        target_circuit_fail_threshold = self._positive_int(
-            forward_cfg.get("target_circuit_fail_threshold", 3), 3
-        )
-        target_circuit_cooldown_sec = self._positive_int(
-            forward_cfg.get("target_circuit_cooldown_sec", 300), 300
-        )
-        return (
-            fail_fast_limit,
-            target_circuit_fail_threshold,
-            target_circuit_cooldown_sec,
-        )
+        return resolve_send_limits(forward_cfg)
 
     @staticmethod
     def _flatten_batches(batches: list[list[Message]]) -> list[list[Message]]:
-        real_batches = []
-        for item in batches:
-            if (
-                isinstance(item, list)
-                and item
-                and all(isinstance(sub, list) for sub in item)
-            ):
-                real_batches.extend(item)
-            else:
-                real_batches.append(item)
-        return real_batches
+        return flatten_batches(batches)
 
     async def _resolve_bot_send_identity(self) -> tuple[int, str]:
         bot = self.bot
@@ -371,31 +344,19 @@ class QQSender:
         target_failures: dict[int, str],
         deferred_batch_indexes: set[int],
     ) -> QQSendSummary:
-        target_count = len(context_target_sessions)
-        acked = tuple(
-            batch_index
-            for batch_index, success_sessions in target_successes.items()
-            if len(success_sessions) == target_count
-        )
-        deferred = tuple(sorted(deferred_batch_indexes))
-        failed = tuple(
-            batch_index
-            for batch_index, success_sessions in target_successes.items()
-            if len(success_sessions) != target_count
-            and batch_index not in deferred_batch_indexes
-        )
-        return QQSendSummary(
-            acked_batch_indexes=acked,
-            failed_batch_indexes=failed,
-            deferred_batch_indexes=deferred,
-            error_types=target_failures,
+        return build_send_summary(
+            QQSendSummary,
+            context_target_sessions=context_target_sessions,
+            target_successes=target_successes,
+            target_failures=target_failures,
+            deferred_batch_indexes=deferred_batch_indexes,
         )
 
     def _cleanup_processed_batches(
         self, processed_batches: list[ProcessedBatchData]
     ) -> None:
-        for batch_data in processed_batches:
-            self._cleanup_files(batch_data["local_files"])
+        local_files = collect_processed_batch_local_files(processed_batches)
+        self._cleanup_files(local_files)
 
     async def send(
         self,
