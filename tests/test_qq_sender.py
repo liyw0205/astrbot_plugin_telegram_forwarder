@@ -61,6 +61,17 @@ class TestDispatchMediaFile:
         assert len(result) == 1
         assert type(result[0]).__name__ == "File"
 
+    def test_dispatch_media_file_uses_mapped_path_for_generic_file(self, qq_module):
+        result = qq_module.dispatch_media_file(
+            "/tmp/report.txt",
+            map_path=lambda path: "/mapped/report.txt",
+        )
+
+        assert len(result) == 1
+        assert type(result[0]).__name__ == "File"
+        assert result[0].file == "/mapped/report.txt"
+        assert result[0].name == "report.txt"
+
 
 class TestGetSenderDisplayName:
     def test_post_author_channel(self, sender):
@@ -125,6 +136,17 @@ class TestBatchAudioDetection:
         )[0]
         assert sender._batch_contains_audio([[file_comp]]) is False
 
+    def test_media_helpers_prevent_merging_audio_and_special_media(self, qq_module):
+        record = qq_module.Record.fromFileSystem("/tmp/audio.mp3")
+        assert qq_module.batch_contains_audio([[record]]) is True
+
+        video = qq_module.Video.fromFileSystem("/tmp/video.mp4")
+        batch_data = {
+            "nodes_data": [[qq_module.Plain("caption")], [video]],
+            "contains_audio": False,
+        }
+        assert qq_module.should_merge_batch_nodes(batch_data) is False
+
 
 class TestBatchMergeDecision:
     def test_audio_batch_never_uses_nodes_merge(self, sender):
@@ -142,7 +164,79 @@ class TestBatchMergeDecision:
         assert sender._should_merge_batch_nodes(batch_data) is True
 
 
+class TestTargetCircuitHelpers:
+    def test_circuit_helpers_open_after_threshold_and_clear_on_success(self, qq_module):
+        circuit_state = {}
+        target_session = "p:GroupMessage:1"
+
+        qq_module.record_target_failure(
+            circuit_state,
+            target_session,
+            threshold=2,
+            cooldown_sec=30,
+            now_ts=100.0,
+        )
+        assert qq_module.target_is_open(circuit_state, target_session, 100.0) is False
+
+        qq_module.record_target_failure(
+            circuit_state,
+            target_session,
+            threshold=2,
+            cooldown_sec=30,
+            now_ts=101.0,
+        )
+        assert qq_module.target_is_open(circuit_state, target_session, 102.0) is True
+
+        qq_module.record_target_success(circuit_state, target_session)
+        assert qq_module.target_is_open(circuit_state, target_session, 102.0) is False
+
+    def test_circuit_helper_removes_expired_open_state(self, qq_module):
+        circuit_state = {
+            "p:GroupMessage:1": {
+                "consecutive_failures": 2,
+                "open_until": 120.0,
+            }
+        }
+
+        assert (
+            qq_module.target_is_open(circuit_state, "p:GroupMessage:1", 121.0) is False
+        )
+        assert circuit_state == {}
+
+
 class TestReplyPreview:
+    def test_reply_preview_helpers_format_text_preview(self, qq_module):
+        user = type("User", (), {"first_name": "Alice"})()
+        msg = type(
+            "Msg",
+            (),
+            {
+                "sender": user,
+                "post_author": None,
+                "text": "first line\nsecond line",
+            },
+        )()
+
+        preview = qq_module.build_reply_preview(msg)
+
+        assert preview == "↩ 回复 Alice:\nfirst line second line"
+
+    def test_reply_preview_helpers_fall_back_to_media_label(self, qq_module):
+        msg = type(
+            "Msg",
+            (),
+            {
+                "sender": None,
+                "post_author": "Channel Author",
+                "text": "",
+                "photo": object(),
+            },
+        )()
+
+        preview = qq_module.build_reply_preview(msg)
+
+        assert preview == "↩ 回复 Channel Author:\n[图片]"
+
     def test_reply_media_label_variants(self, sender):
         assert (
             sender._reply_media_label(type("Msg", (), {"photo": object()})())
@@ -222,6 +316,26 @@ class TestReplyPreview:
 
 
 class TestAudioBatchSending:
+    @pytest.mark.asyncio
+    async def test_send_processed_batch_wrapper_delegates_to_dispatcher(
+        self, sender, qq_module
+    ):
+        dispatcher_mock = AsyncMock()
+        setattr(qq_module, "send_processed_batch", dispatcher_mock)
+
+        await sender._send_processed_batch(
+            batch_data={
+                "nodes_data": [[qq_module.Plain("x")]],
+                "contains_audio": False,
+            },
+            unified_msg_origin="target",
+            self_id=1,
+            node_name="bot",
+            target_session="target",
+        )
+
+        dispatcher_mock.assert_awaited_once()
+
     @pytest.mark.asyncio
     async def test_captioned_audio_batch_sends_text_record_and_file(
         self, sender, qq_module
@@ -429,6 +543,42 @@ class TestAudioBatchSending:
         assert type(calls[5].args[1].chain[0]).__name__ == "File"
 
 
+class TestQQBatchBuilder:
+    @pytest.mark.asyncio
+    async def test_build_processed_batches_preserves_header_text_media_and_files(
+        self, sender, qq_module
+    ):
+        sender.downloader.download_media = AsyncMock(return_value=["/tmp/photo.jpg"])
+        sender._dispatch_media_file = lambda path: [
+            qq_module.Image.fromFileSystem(path)
+        ]
+        msg = type(
+            "Msg", (), {"id": 1, "text": "hello", "reply_to": None, "_max_file_size": 0}
+        )()
+
+        result = await qq_module.build_processed_batches(
+            sender=sender,
+            real_batches=[[msg]],
+            src_channel="demo",
+            display_name="demo",
+            involved_channels=None,
+            strip_links=False,
+            exclude_text_on_media=False,
+        )
+
+        assert len(result.processed_batches) == 1
+        batch = result.processed_batches[0]
+        assert batch["batch_index"] == 0
+        assert batch["local_files"] == ["/tmp/photo.jpg"]
+        assert batch["contains_audio"] is False
+        assert any(
+            hasattr(component, "text") and "From @demo:" in component.text
+            for node in batch["nodes_data"]
+            for component in node
+        )
+        assert result.target_failures == {}
+
+
 class TestReplyPreviewIntegration:
     @pytest.mark.asyncio
     async def test_reply_preview_prepended_before_message_text(self, sender, qq_module):
@@ -468,6 +618,193 @@ class TestReplyPreviewIntegration:
         assert any("↩ 回复:" in text for text in texts)
         assert any("quoted text" in text for text in texts)
         assert any("reply body" in text for text in texts)
+
+
+class TestSendHelperExtraction:
+    def test_resolve_text_processing_options_uses_global_config_for_mixed_channels(
+        self, sender
+    ):
+        sender.config = {
+            "forward_config": {
+                "strip_markdown_links": True,
+                "exclude_text_on_media": False,
+            }
+        }
+        effective_cfg = {
+            "strip_markdown_links": False,
+            "exclude_text_on_media": True,
+        }
+
+        strip_links, exclude_text_on_media = sender._resolve_text_processing_options(
+            effective_cfg, ["channel-a", "channel-b"]
+        )
+
+        assert strip_links is True
+        assert exclude_text_on_media is False
+
+    def test_resolve_text_processing_options_uses_effective_config_for_single_channel(
+        self, sender
+    ):
+        sender.config = {
+            "forward_config": {
+                "strip_markdown_links": True,
+                "exclude_text_on_media": False,
+            }
+        }
+        effective_cfg = {
+            "strip_markdown_links": False,
+            "exclude_text_on_media": True,
+        }
+
+        strip_links, exclude_text_on_media = sender._resolve_text_processing_options(
+            effective_cfg, ["channel-a"]
+        )
+
+        assert strip_links is False
+        assert exclude_text_on_media is True
+
+    def test_module_export_resolve_text_processing_options_for_mixed_channels(
+        self, qq_module
+    ):
+        config = {
+            "forward_config": {
+                "strip_markdown_links": True,
+                "exclude_text_on_media": False,
+            }
+        }
+        effective_cfg = {
+            "strip_markdown_links": False,
+            "exclude_text_on_media": True,
+        }
+
+        strip_links, exclude_text_on_media = qq_module.resolve_text_processing_options(
+            config,
+            effective_cfg,
+            ["channel-a", "channel-b"],
+        )
+
+        assert strip_links is True
+        assert exclude_text_on_media is False
+
+    def test_module_export_resolve_send_limits(self, qq_module):
+        assert qq_module.resolve_send_limits(
+            {
+                "qq_target_fail_fast_consecutive_failures": "0",
+                "target_circuit_fail_threshold": "2",
+                "target_circuit_cooldown_sec": None,
+            }
+        ) == (1, 2, 300)
+
+    def test_module_export_flatten_batches(self, qq_module):
+        batches = [["a"], [["b"], ["c"]], ["d"]]
+
+        assert qq_module.flatten_batches(batches) == [["a"], ["b"], ["c"], ["d"]]
+
+    def test_module_export_build_send_summary_preserves_ack_failed_deferred_semantics(
+        self, qq_module
+    ):
+        summary = qq_module.build_send_summary(
+            qq_module.QQSendSummary,
+            context_target_sessions=["test:GroupMessage:1", "test:GroupMessage:2"],
+            target_successes={
+                0: {"test:GroupMessage:1", "test:GroupMessage:2"},
+                1: {"test:GroupMessage:1"},
+                2: set(),
+            },
+            target_failures={1: "timeout", 2: "circuit_open"},
+            deferred_batch_indexes={2},
+        )
+
+        assert isinstance(summary, qq_module.QQSendSummary)
+        assert summary.acked_batch_indexes == (0,)
+        assert summary.failed_batch_indexes == (1,)
+        assert summary.deferred_batch_indexes == (2,)
+        assert summary.error_types == {1: "timeout", 2: "circuit_open"}
+
+    def test_module_export_collect_processed_batch_local_files(self, qq_module):
+        processed_batches = [
+            {
+                "batch_index": 0,
+                "nodes_data": [],
+                "local_files": ["/tmp/a.jpg", "/tmp/b.mp4"],
+                "contains_audio": False,
+            },
+            {
+                "batch_index": 1,
+                "nodes_data": [],
+                "local_files": ["/tmp/c.ogg"],
+                "contains_audio": True,
+            },
+            {
+                "batch_index": 2,
+                "nodes_data": [],
+                "local_files": [],
+                "contains_audio": False,
+            },
+        ]
+
+        assert qq_module.collect_processed_batch_local_files(processed_batches) == [
+            "/tmp/a.jpg",
+            "/tmp/b.mp4",
+            "/tmp/c.ogg",
+        ]
+
+
+class TestDispatchLoopExtraction:
+    @pytest.mark.asyncio
+    async def test_send_delegates_target_dispatch_to_dispatcher_function(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock()
+        sender._bootstrap_qq_runtime = AsyncMock()
+        sender._ensure_node_name = AsyncMock(return_value="bot")
+        sender.downloader.client = MagicMock()
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        sender._cleanup_files = MagicMock()
+
+        bot = MagicMock()
+        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        sender.bot = bot
+
+        processed_batch = {
+            "batch_index": 0,
+            "nodes_data": [[qq_module.Plain("hello")]],
+            "local_files": ["/tmp/a.txt"],
+            "contains_audio": False,
+        }
+        qq_module.build_processed_batches = AsyncMock(
+            return_value=type(
+                "BuildResult",
+                (),
+                {"processed_batches": [processed_batch], "target_failures": {}},
+            )()
+        )
+        dispatch_mock = AsyncMock(
+            return_value=type(
+                "DispatchResult",
+                (),
+                {
+                    "target_successes": {0: {"test:GroupMessage:1"}},
+                    "target_failures": {},
+                    "deferred_batch_indexes": set(),
+                },
+            )()
+        )
+        setattr(qq_module, "dispatch_processed_batches_to_targets", dispatch_mock)
+
+        summary = await sender.send(
+            batches=[[type("Msg", (), {"id": 1, "text": "x", "reply_to": None})()]],
+            src_channel="demo",
+            display_name="demo",
+            effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
+            involved_channels=None,
+        )
+
+        dispatch_mock.assert_awaited_once()
+        sender._cleanup_files.assert_called_once_with(["/tmp/a.txt"])
+        assert summary.acked_batch_indexes == (0,)
+        assert summary.failed_batch_indexes == ()
+        assert summary.deferred_batch_indexes == ()
 
 
 class TestSendSummary:
@@ -976,3 +1313,119 @@ class TestBigMergeFallback:
             and "caption" not in message
             for message in debug_calls
         )
+
+
+class TestQQTargetHelpers:
+    def test_split_qq_targets_separates_sessions_and_numeric_groups(self, qq_module):
+        session_targets, group_ids = qq_module.split_qq_targets(
+            ["aiocqhttp:GroupMessage:100", "200", 300, "", None, "bad-target"]
+        )
+
+        assert session_targets == ["aiocqhttp:GroupMessage:100"]
+        assert group_ids == ["200", "300"]
+
+    def test_dedupe_keep_order_preserves_first_occurrence(self, qq_module):
+        assert qq_module.dedupe_keep_order(["a", "b", "a", "c", "b"]) == ["a", "b", "c"]
+
+    def test_session_platform_ids_extracts_unique_platform_ids(self, qq_module):
+        assert qq_module.session_platform_ids(
+            [
+                "aiocqhttp:GroupMessage:1",
+                "telegram:GroupMessage:2",
+                "aiocqhttp:PrivateMessage:3",
+                "invalid",
+            ]
+        ) == ["aiocqhttp", "telegram"]
+
+    def test_classify_send_error_matches_existing_error_strings(self, qq_module):
+        assert (
+            qq_module.classify_send_error(RuntimeError("WebSocket API call timeout"))
+            == "timeout"
+        )
+        assert (
+            qq_module.classify_send_error(RuntimeError("retcode=1200"))
+            == "retcode_1200"
+        )
+        assert (
+            qq_module.classify_send_error(RuntimeError("wrong session ID"))
+            == "wrong_session_id"
+        )
+        assert qq_module.classify_send_error(RuntimeError("other")) == "send_failed"
+
+
+class TestQQRuntimeHelpers:
+    def test_get_platform_instances_reads_platform_insts(self, qq_module):
+        platform = MagicMock()
+        manager = type("Manager", (), {"platform_insts": [platform]})()
+        context = type("Context", (), {"platform_manager": manager})()
+
+        assert qq_module.get_platform_instances(context) == [platform]
+
+    def test_get_platform_instances_uses_get_insts_fallback(self, qq_module):
+        platform = MagicMock()
+        manager = type("Manager", (), {"get_insts": lambda self: [platform]})()
+        context = type("Context", (), {"platform_manager": manager})()
+
+        assert qq_module.get_platform_instances(context) == [platform]
+
+    def test_select_platform_prefers_configured_platform_id(self, qq_module):
+        preferred = MagicMock()
+        preferred.meta.return_value = type(
+            "Meta", (), {"id": "preferred", "name": "other"}
+        )()
+        fallback = MagicMock()
+        fallback.meta.return_value = type(
+            "Meta", (), {"id": "fallback", "name": "aiocqhttp"}
+        )()
+
+        selected = qq_module.select_qq_platform(
+            [fallback, preferred], ["preferred"], None
+        )
+
+        assert selected == (preferred, "preferred", "other")
+
+    def test_select_platform_prefers_aiocqhttp_when_no_preference(self, qq_module):
+        other = MagicMock()
+        other.meta.return_value = type(
+            "Meta", (), {"id": "other", "name": "telegram"}
+        )()
+        qq = MagicMock()
+        qq.meta.return_value = type("Meta", (), {"id": "qq", "name": "aiocqhttp"})()
+
+        selected = qq_module.select_qq_platform([other, qq], [], None)
+
+        assert selected == (qq, "qq", "aiocqhttp")
+
+    def test_select_platform_prefers_platform_ids_in_list_order(self, qq_module):
+        platform_a = MagicMock()
+        platform_a.meta.return_value = type(
+            "Meta", (), {"id": "a", "name": "platform-a"}
+        )()
+        platform_b = MagicMock()
+        platform_b.meta.return_value = type(
+            "Meta", (), {"id": "b", "name": "platform-b"}
+        )()
+
+        selected = qq_module.select_qq_platform(
+            [platform_a, platform_b], ["b", "a"], None
+        )
+
+        assert selected == (platform_b, "b", "platform-b")
+
+
+class TestProcessedBatchType:
+    def test_processed_batch_can_be_used_as_existing_batch_data_dict(self, qq_module):
+        plain = qq_module.Plain("hello")
+        batch = qq_module.ProcessedBatch(
+            batch_index=3,
+            nodes_data=[[plain]],
+            local_files=["/tmp/file.txt"],
+            contains_audio=False,
+        )
+
+        assert batch.as_batch_data() == {
+            "batch_index": 3,
+            "nodes_data": [[plain]],
+            "local_files": ["/tmp/file.txt"],
+            "contains_audio": False,
+        }
