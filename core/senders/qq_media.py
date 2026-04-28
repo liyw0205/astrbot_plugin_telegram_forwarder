@@ -7,6 +7,7 @@
 
 import os
 from collections.abc import Callable
+from types import MethodType
 from typing import Any
 
 from astrbot.api.message_components import File, Image, Plain, Record, Video
@@ -14,6 +15,18 @@ from astrbot.api.message_components import File, Image, Plain, Record, Video
 from .qq_batch_builder import ProcessedBatchData
 
 _ = Plain
+
+
+def _set_component_attr(component: object, name: str, value: object) -> None:
+    """尽力向消息组件附加元数据，兼容宽松/严格两种模型。"""
+    try:
+        object.__setattr__(component, name, value)
+    except Exception:
+        try:
+            setattr(component, name, value)
+        except Exception:
+            if hasattr(component, "__dict__"):
+                component.__dict__[name] = value
 
 
 def map_path_with_config(
@@ -54,13 +67,15 @@ def dispatch_media_file(
     if ext in (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"):
         if audio_mode == "file_only":
             mapped = map_path(fpath)
-            return [
+            component = _patch_file_to_dict(
                 File(
                     file=mapped,
                     url="",
                     name=os.path.basename(fpath),
                 )
-            ]
+            )
+            _set_component_attr(component, "_tgf_source_path", fpath)
+            return [component]
         record = Record.fromFileSystem(fpath)
         if getattr(record, "path", None) is None:
             setattr(record, "path", fpath)
@@ -71,13 +86,50 @@ def dispatch_media_file(
             return [Video(file=f"file:///{mapped}")]
         return [Video.fromFileSystem(fpath)]
     mapped = map_path(fpath)
-    return [
+    component = _patch_file_to_dict(
         File(
             file=mapped,
             url="",
             name=os.path.basename(fpath),
         )
-    ]
+    )
+    _set_component_attr(component, "_tgf_source_path", fpath)
+    return [component]
+
+
+def _patch_file_to_dict(f: File) -> File:
+    """修复 AstrBot File.toDict() 输出 file_ 而非 file 的核心 bug。
+
+    AstrBot 的 BaseMessageComponent.toDict() 遍历 __dict__，而 File 类的 file
+    是 property（不在 __dict__ 中），导致序列化输出 file_ key。
+    OneBot 协议和 aiocqhttp 适配器期望 file key，否则 NapCat 报"文件消息缺少参数"。
+
+    通过直接操作 __dict__ 绕过 Pydantic v1 的 __setattr__ 限制。
+    """
+    file_value = getattr(f, "file_", "") or ""
+    if file_value:
+        f.__dict__["file"] = file_value
+
+        # 跨环境路径映射（如 Docker 容器路径 /plugin_data/...）在当前宿主机上
+        # 可能就是不可达的。AstrBot 的 File.get_file() 因 os.path.exists() 为
+        # false 会丢弃这些路径，导致后续发给 OneBot 的文件载荷为空。
+        if "://" not in file_value and not os.path.exists(file_value):
+
+            async def _plugin_to_dict(self: File) -> dict:
+                return {
+                    "type": "file",
+                    "data": {
+                        "name": getattr(self, "name", ""),
+                        "file": file_value,
+                    },
+                }
+
+            bound_to_dict = MethodType(_plugin_to_dict, f)
+            try:
+                object.__setattr__(f, "to_dict", bound_to_dict)
+            except Exception:
+                f.__dict__["to_dict"] = bound_to_dict
+    return f
 
 
 def batch_contains_audio(nodes_data: list[list[object]]) -> bool:

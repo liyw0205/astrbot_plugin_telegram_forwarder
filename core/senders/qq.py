@@ -27,6 +27,10 @@ from .qq_batch_builder import (
 )
 from .qq_circuit import record_target_failure, record_target_success, target_is_open
 from .qq_dispatcher import dispatch_processed_batches_to_targets, send_processed_batch
+from .qq_file_fallback import (
+    handle_apk_file_send_failure,
+    resolve_apk_fallback_policy,
+)
 from .qq_media import (
     File,
     Image,
@@ -64,8 +68,6 @@ from .qq_targets import (
 )
 
 _ = Plain, ProcessedBatch, File, Image, Record, Video
-
-
 @dataclass(frozen=True)
 class QQSendSummary:
     """面向上层调用方法的 QQ 批次发送结果。
@@ -145,6 +147,29 @@ class QQSender:
             audio_mode=audio_mode,
         )
 
+    async def _handle_file_send_failure(
+        self,
+        component: File,
+        error: Exception,
+        batch_data: ProcessedBatchData,
+        unified_msg_origin: str,
+        target_session: str,
+    ) -> bool:
+        return await handle_apk_file_send_failure(
+            policy=resolve_apk_fallback_policy(
+                self.config.get("forward_config", {})
+            ),
+            component=component,
+            error=error,
+            batch_data=batch_data,
+            unified_msg_origin=unified_msg_origin,
+            target_session=target_session,
+            send_message_fn=self.context.send_message,
+            map_path=self._map_path,
+            classify_send_error=self._classify_send_error,
+            plugin_data_dir=getattr(self.downloader, "plugin_data_dir", None),
+        )
+
     @staticmethod
     def _get_sender_display_name(msg: Message) -> str:
         return get_sender_display_name(msg)
@@ -183,6 +208,7 @@ class QQSender:
         self_id: int,
         node_name: str,
         target_session: str,
+        allow_forward_nodes: bool = True,
     ) -> None:
         await send_processed_batch(
             batch_data=batch_data,
@@ -193,6 +219,8 @@ class QQSender:
             context=self.context,
             map_path=self._map_path,
             should_merge=self._should_merge_batch_nodes,
+            allow_forward_nodes=allow_forward_nodes,
+            handle_file_send_failure=self._handle_file_send_failure,
         )
 
     async def initialize_runtime(self):

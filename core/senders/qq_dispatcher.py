@@ -17,6 +17,7 @@ from astrbot.api.event import MessageChain
 from astrbot.api.message_components import File, Node, Nodes, Record, Video
 
 from .qq_batch_builder import ProcessedBatchData
+from .qq_media import _patch_file_to_dict
 
 
 class SendProcessedBatchFn(Protocol):
@@ -30,6 +31,7 @@ class SendProcessedBatchFn(Protocol):
         self_id: int,
         node_name: str,
         target_session: str,
+        allow_forward_nodes: bool,
     ) -> Awaitable[None]: ...
 
 
@@ -139,8 +141,27 @@ async def dispatch_processed_batches_to_targets(
                     chunk_batch_indexes = [bd["batch_index"] for bd in chunk_batches]
                     for bd in chunk_batches:
                         chunk_nodes.extend(bd["nodes_data"])
+                    chunk_has_special_media = any(
+                        batch_data.get("contains_audio")
+                        or any(
+                            isinstance(component, (Record, File, Video))
+                            for node_components in batch_data["nodes_data"]
+                            for component in node_components
+                        )
+                        for batch_data in chunk_batches
+                    )
                     try:
-                        if len(chunk_nodes) > 1:
+                        if len(chunk_batches) == 1 or chunk_has_special_media:
+                            for batch_data in chunk_batches:
+                                await send_processed_batch_fn(
+                                    batch_data=batch_data,
+                                    unified_msg_origin=unified_msg_origin,
+                                    self_id=self_id,
+                                    node_name=node_name,
+                                    target_session=target_session,
+                                    allow_forward_nodes=False,
+                                )
+                        elif len(chunk_nodes) > 1:
                             nodes_list = [
                                 Node(uin=self_id, name=node_name, content=nc)
                                 for nc in chunk_nodes
@@ -149,10 +170,14 @@ async def dispatch_processed_batches_to_targets(
                             message_chain.chain.append(Nodes(nodes_list))
                             await send_message_fn(unified_msg_origin, message_chain)
                         else:
-                            components = chunk_nodes[0]
-                            message_chain = MessageChain()
-                            message_chain.chain.extend(components)
-                            await send_message_fn(unified_msg_origin, message_chain)
+                            await send_processed_batch_fn(
+                                batch_data=chunk_batches[0],
+                                unified_msg_origin=unified_msg_origin,
+                                self_id=self_id,
+                                node_name=node_name,
+                                target_session=target_session,
+                                allow_forward_nodes=False,
+                            )
                         for batch_index in chunk_batch_indexes:
                             target_successes[batch_index].add(target_session)
                         record_target_success(target_session)
@@ -181,6 +206,7 @@ async def dispatch_processed_batches_to_targets(
                                     self_id=self_id,
                                     node_name=node_name,
                                     target_session=target_session,
+                                    allow_forward_nodes=False,
                                 )
                                 target_successes[batch_index].add(target_session)
                                 record_target_success(target_session)
@@ -226,6 +252,7 @@ async def dispatch_processed_batches_to_targets(
                             self_id=self_id,
                             node_name=node_name,
                             target_session=target_session,
+                            allow_forward_nodes=True,
                         )
                         target_successes[batch_index].add(target_session)
                         record_target_success(target_session)
@@ -267,6 +294,11 @@ async def send_processed_batch(
     context: MessageContext,
     map_path: Callable[[str], str],
     should_merge: Callable[[ProcessedBatchData], bool],
+    allow_forward_nodes: bool = True,
+    handle_file_send_failure: Callable[
+        [File, Exception, ProcessedBatchData, str, str], Awaitable[bool]
+    ]
+    | None = None,
 ) -> None:
     """把单个预处理批次发送到单个 QQ 目标。
 
@@ -283,6 +315,15 @@ async def send_processed_batch(
             normalized = File(file=compat_file, name=getattr(component, "name", None))
             if getattr(component, "file_", None) is not None:
                 setattr(normalized, "file_", component.file_)
+            for attr_name in ("_tgf_source_path",):
+                attr_value = getattr(component, attr_name, None)
+                if attr_value is None:
+                    continue
+                try:
+                    object.__setattr__(normalized, attr_name, attr_value)
+                except Exception:
+                    normalized.__dict__[attr_name] = attr_value
+            _patch_file_to_dict(normalized)
             return normalized
         return component
 
@@ -296,7 +337,7 @@ async def send_processed_batch(
         )
 
     all_nodes_data = batch_data["nodes_data"]
-    if should_merge(batch_data):
+    if allow_forward_nodes and should_merge(batch_data):
         message_chain = MessageChain()
         nodes_list = [
             Node(uin=self_id, name=node_name, content=nc) for nc in all_nodes_data
@@ -323,6 +364,7 @@ async def send_processed_batch(
                             url="",
                             name=os.path.basename(path),
                         )
+                        _patch_file_to_dict(file_component)
                         log_file_payload(file_component)
                         file_chain = MessageChain([file_component])
                         await context.send_message(unified_msg_origin, file_chain)
@@ -353,7 +395,35 @@ async def send_processed_batch(
                         c = normalize_file_payload(c)
                         log_file_payload(c)
                     chain = MessageChain([c])
-                    await context.send_message(unified_msg_origin, chain)
+                    try:
+                        await context.send_message(unified_msg_origin, chain)
+                    except Exception as send_error:
+                        logger.warning(
+                            f"[QQSender] Special media send failed: "
+                            f"target={target_session}, "
+                            f"batch_index={batch_data.get('batch_index')}, "
+                            f"node_types={component_types}, "
+                            f"type={type(c).__name__}, "
+                            f"file={getattr(c, 'file', None)!r}, "
+                            f"file_={getattr(c, 'file_', None)!r}, "
+                            f"url={getattr(c, 'url', None)!r}, "
+                            f"name={getattr(c, 'name', None)!r}, "
+                            f"source_path={getattr(c, '_tgf_source_path', getattr(c, 'path', None))!r}, "
+                            f"error={send_error}"
+                        )
+                        if (
+                            isinstance(c, File)
+                            and handle_file_send_failure is not None
+                            and await handle_file_send_failure(
+                                c,
+                                send_error,
+                                batch_data,
+                                unified_msg_origin,
+                                target_session,
+                            )
+                        ):
+                            continue
+                        raise
             common_components = [
                 c for c in node_components if not isinstance(c, special_types)
             ]

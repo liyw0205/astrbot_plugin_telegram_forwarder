@@ -845,7 +845,7 @@ class Forwarder:
                             to_telethon_entity(channel), ids=ids
                         )
                         for m in msgs:
-                            if not m:
+                            if not m or not isinstance(m, Message):
                                 continue
                             raw_fetched_messages.append((channel, m))
                             all_fetched_keys.add((channel, m.id))
@@ -1734,6 +1734,8 @@ class Forwarder:
             async for message in self.client.iter_messages(**params):
                 if self._stopping:
                     break
+                if not isinstance(message, Message):
+                    continue
                 if not message.id:
                     continue
 

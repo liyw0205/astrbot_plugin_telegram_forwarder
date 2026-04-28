@@ -844,6 +844,8 @@ class PluginCommands:
                 ("qq_merge_threshold", "QQ 合并转发阈值（≥此值打包合并，≤1=永不合并）"),
                 ("retention_period", "待发消息最长保留时间（秒，超期丢弃，默认86400）"),
                 ("max_file_size", "非图片媒体大小上限（MB，0=不限制）"),
+                ("apk_fallback_mode", "APK 发送失败兜底模式（关闭/直链/压缩包/直链优先失败转压缩包）"),
+                ("apk_direct_link_base_url", "APK 直链基址（仅在直链模式下生效）"),
                 (
                     "exclude_text_on_media",
                     "媒体消息是否只发媒体不带文字（true/false/开启/关闭）",
@@ -1032,6 +1034,8 @@ class PluginCommands:
                     x.strip() for x in v.split(",") if x.strip()
                 ],
                 "max_file_size": float,
+                "apk_fallback_mode": str,
+                "apk_direct_link_base_url": str,
                 "exclude_text_on_media": lambda v: (
                     v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
                 ),
@@ -1320,6 +1324,8 @@ class PluginCommands:
             "batch_size_limit": int,
             "retention_period": int,
             "max_file_size": float,
+            "apk_fallback_mode": str,
+            "apk_direct_link_base_url": str,
             "start_time": str,
             "curfew_time": str,
             "filter_regex": str,

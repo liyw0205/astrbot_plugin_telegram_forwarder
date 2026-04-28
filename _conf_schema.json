@@ -282,6 +282,24 @@
                 "default": 0,
                 "hint": "除图片外的媒体（音频、视频、文件）大小限制。0 表示不限制。"
             },
+            "apk_fallback_mode": {
+                "description": "APK 发送失败兜底模式",
+                "type": "string",
+                "options": [
+                    "关闭",
+                    "直链",
+                    "压缩包",
+                    "直链优先，失败转压缩包"
+                ],
+                "default": "直链优先，失败转压缩包",
+                "hint": "当 QQ 对 APK/XAPK/APKM/APKS 上传返回 rich media transfer failed 时，可选择改发直链或自动压缩成 zip 再转发"
+            },
+            "apk_direct_link_base_url": {
+                "description": "APK 直链基址",
+                "type": "string",
+                "default": "",
+                "hint": "仅在直链关联模式下生效。插件会把文件名拼接到该基址后，例如 https://files.example.com/downloads/"
+            },
             "check_interval": {
                 "description": "检测间隔(秒)",
                 "type": "int",

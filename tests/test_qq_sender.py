@@ -1,10 +1,13 @@
 """Tests for QQSender helper behavior."""
 
+import importlib.util
 import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import conftest as plugin_conftest
 import pytest
 
 
@@ -71,6 +74,43 @@ class TestDispatchMediaFile:
         assert type(result[0]).__name__ == "File"
         assert result[0].file == "/mapped/report.txt"
         assert result[0].name == "report.txt"
+
+    @pytest.mark.asyncio
+    async def test_patch_file_to_dict_uses_object_setattr_for_strict_models(self):
+        previous_modules = plugin_conftest._register_mock_package_tree()
+        spec = importlib.util.spec_from_file_location(
+            "astrbot_plugin_telegram_forwarder.core.senders.qq_media",
+            str(Path(plugin_conftest._repo_root) / "core" / "senders" / "qq_media.py"),
+        )
+        qq_media = importlib.util.module_from_spec(spec)
+        qq_media.__package__ = "astrbot_plugin_telegram_forwarder.core.senders"
+        try:
+            spec.loader.exec_module(qq_media)
+        finally:
+            plugin_conftest._restore_mock_package_tree(previous_modules)
+
+        class StrictFile:
+            def __init__(self):
+                object.__setattr__(self, "name", "mapped.apk")
+                object.__setattr__(self, "file_", "/plugin_data/demo/mapped.apk")
+
+            def __setattr__(self, name, value):
+                if name not in {"name", "file_"}:
+                    raise ValueError(f'"StrictFile" object has no field "{name}"')
+                object.__setattr__(self, name, value)
+
+        strict_file = StrictFile()
+
+        patched = qq_media._patch_file_to_dict(strict_file)
+        payload = await patched.to_dict()
+
+        assert payload == {
+            "type": "file",
+            "data": {
+                "name": "mapped.apk",
+                "file": "/plugin_data/demo/mapped.apk",
+            },
+        }
 
 
 class TestGetSenderDisplayName:
@@ -335,6 +375,7 @@ class TestAudioBatchSending:
         )
 
         dispatcher_mock.assert_awaited_once()
+        assert dispatcher_mock.await_args.kwargs["allow_forward_nodes"] is True
 
     @pytest.mark.asyncio
     async def test_captioned_audio_batch_sends_text_record_and_file(
@@ -387,6 +428,49 @@ class TestAudioBatchSending:
         )
 
     @pytest.mark.asyncio
+    async def test_file_send_logs_failure_diagnostics_with_batch_index_and_source_path(
+        self, sender, qq_module
+    ):
+        sender.config = {"forward_config": {"apk_fallback_mode": "off"}}
+        sender.context.send_message = AsyncMock(
+            side_effect=RuntimeError("rich media transfer failed")
+        )
+        qq_module.logger.warning.reset_mock()
+        file_component = qq_module.File(file="/tmp/base.apk", name="base.apk")
+        file_component.file_ = "/tmp/base.apk"
+        file_component.url = ""
+        file_component._tgf_source_path = "/tmp/source/base.apk"
+
+        with pytest.raises(RuntimeError, match="rich media transfer failed"):
+            await sender._send_processed_batch(
+                batch_data={
+                    "batch_index": 0,
+                    "nodes_data": [[file_component]],
+                    "contains_audio": False,
+                    "local_files": [],
+                },
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+        warning_messages = [
+            call.args[0] for call in qq_module.logger.warning.call_args_list if call.args
+        ]
+        assert any(
+            "batch_index=0" in message
+            and "node_types=['File']" in message
+            and "type=File" in message
+            and "file='/tmp/base.apk'" in message
+            and "file_='/tmp/base.apk'" in message
+            and "url=''" in message
+            and "name='base.apk'" in message
+            and "source_path='/tmp/source/base.apk'" in message
+            for message in warning_messages
+        )
+
+    @pytest.mark.asyncio
     async def test_file_send_copies_file_path_from_file_compat_field(
         self, sender, qq_module
     ):
@@ -408,6 +492,131 @@ class TestAudioBatchSending:
 
         sent_file = sender.context.send_message.await_args_list[0].args[1].chain[0]
         assert sent_file.file == "/mapped/audio.ogg"
+
+    @pytest.mark.asyncio
+    async def test_file_send_overrides_to_dict_for_nonexistent_mapped_path(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock()
+        file_component = qq_module.File(name="mapped.apk")
+        file_component.file = ""
+        file_component.file_ = "/plugin_data/demo/mapped.apk"
+
+        await sender._send_processed_batch(
+            batch_data={
+                "nodes_data": [[file_component]],
+                "contains_audio": False,
+            },
+            unified_msg_origin="target",
+            self_id=1,
+            node_name="bot",
+            target_session="target",
+        )
+
+        sent_file = sender.context.send_message.await_args_list[0].args[1].chain[0]
+        payload = await sent_file.to_dict()
+        assert payload == {
+            "type": "file",
+            "data": {
+                "name": "mapped.apk",
+                "file": "/plugin_data/demo/mapped.apk",
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_apk_file_send_failure_falls_back_to_direct_link(
+        self, sender, qq_module
+    ):
+        sender.config = {
+            "forward_config": {
+                "apk_fallback_mode": "link",
+                "apk_direct_link_base_url": "https://files.example.com/downloads",
+            }
+        }
+        sender.context.send_message = AsyncMock(
+            side_effect=[
+                RuntimeError("retcode=1200 rich media transfer failed"),
+                None,
+            ]
+        )
+        file_component = qq_module.File(file="/mapped/base.apk", name="base.apk")
+        file_component.file_ = "/mapped/base.apk"
+        file_component._tgf_source_path = "/tmp/base.apk"
+
+        await sender._send_processed_batch(
+            batch_data={
+                "nodes_data": [[file_component]],
+                "local_files": [],
+                "contains_audio": False,
+            },
+            unified_msg_origin="target",
+            self_id=1,
+            node_name="bot",
+            target_session="target",
+        )
+
+        assert sender.context.send_message.await_count == 2
+        fallback_chain = sender.context.send_message.await_args_list[1].args[1].chain
+        assert len(fallback_chain) == 1
+        assert type(fallback_chain[0]).__name__ == "Plain"
+        assert "https://files.example.com/downloads/base.apk" in fallback_chain[0].text
+
+    @pytest.mark.asyncio
+    async def test_apk_file_send_failure_falls_back_to_zip_archive(
+        self, sender, qq_module
+    ):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"apk-fallback-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        apk_path = plugin_data_dir / "base.apk"
+        apk_path.write_bytes(b"apk-binary")
+
+        sender.config = {
+            "forward_config": {
+                "apk_fallback_mode": "zip",
+                "apk_direct_link_base_url": "",
+            }
+        }
+        sender.downloader.plugin_data_dir = str(plugin_data_dir)
+        sender.context.send_message = AsyncMock(
+            side_effect=[
+                RuntimeError("rich media transfer failed"),
+                None,
+            ]
+        )
+        sender._map_path = lambda path: path
+        file_component = qq_module.File(file=str(apk_path), name="base.apk")
+        file_component.file_ = str(apk_path)
+        file_component._tgf_source_path = str(apk_path)
+        batch_data = {
+            "nodes_data": [[file_component]],
+            "local_files": [str(apk_path)],
+            "contains_audio": False,
+        }
+
+        try:
+            await sender._send_processed_batch(
+                batch_data=batch_data,
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+            assert sender.context.send_message.await_count == 2
+            sent_component = sender.context.send_message.await_args_list[1].args[1].chain[0]
+            assert type(sent_component).__name__ == "File"
+            assert sent_component.name == "base.apk.zip"
+            assert len(batch_data["local_files"]) == 2
+
+            zip_path = Path(batch_data["local_files"][1])
+            assert zip_path.is_file()
+            with zipfile.ZipFile(zip_path) as archive:
+                assert archive.namelist() == ["base.apk"]
+                assert archive.read("base.apk") == b"apk-binary"
+        finally:
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
 
     @pytest.mark.asyncio
     async def test_audio_batch_normalizes_file_component_from_file_compat_field(
@@ -1084,8 +1293,8 @@ class TestTargetLevelFailFast:
             effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
         )
 
-        assert sender.context.send_message.await_count == 1
-        assert sender._send_processed_batch.await_count == 1
+        assert sender.context.send_message.await_count == 0
+        assert sender._send_processed_batch.await_count == 2
         assert summary.acked_batch_indexes == ()
         assert summary.failed_batch_indexes == (0, 1, 2)
 
@@ -1140,8 +1349,8 @@ class TestTargetLevelFailFast:
             effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
         )
 
-        assert sender.context.send_message.await_count == 3
-        assert sender._send_processed_batch.await_count == 2
+        assert sender.context.send_message.await_count == 0
+        assert sender._send_processed_batch.await_count == 4
         assert summary.acked_batch_indexes == (0, 2)
         assert summary.failed_batch_indexes == (1,)
 
@@ -1172,7 +1381,9 @@ class TestBigMergeFallback:
         sender.bot = bot
 
     @pytest.mark.asyncio
-    async def test_big_merge_failure_fallback_keeps_image_album_merge(self, sender):
+    async def test_big_merge_failure_fallback_uses_plain_messages_instead_of_nodes(
+        self, sender
+    ):
         self._configure_sender(sender)
         image_a = self._make_msg(1)
         image_b = self._make_msg(2)
@@ -1196,9 +1407,22 @@ class TestBigMergeFallback:
         )
 
         calls = sender.context.send_message.await_args_list
-        assert sender.context.send_message.await_count == 3
-        assert type(calls[1].args[1].chain[0]).__name__ == "Nodes"
-        assert len(calls[1].args[1].chain[0].value) == 2
+        assert sender.context.send_message.await_count == 4
+        assert all(
+            not any(
+                type(component).__name__ == "Nodes" for component in call.args[1].chain
+            )
+            for call in calls[1:]
+        )
+        assert any(
+            [type(component).__name__ for component in call.args[1].chain]
+            == ["Plain", "Image"]
+            for call in calls[1:]
+        )
+        assert any(
+            [type(component).__name__ for component in call.args[1].chain] == ["Image"]
+            for call in calls[1:]
+        )
 
     @pytest.mark.asyncio
     async def test_big_merge_failure_fallback_splits_video_and_file_components(
@@ -1283,6 +1507,63 @@ class TestBigMergeFallback:
                 and type(call.args[1].chain[0]).__name__ == "File"
             )
             >= 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_big_merge_single_node_audio_chunk_keeps_record_and_file_semantics(
+        self, sender
+    ):
+        sender.context.send_message = AsyncMock()
+        sender._bootstrap_qq_runtime = AsyncMock()
+        sender._ensure_node_name = AsyncMock(return_value="bot")
+        sender.downloader.client = MagicMock()
+        sender._map_path = lambda path: path
+        bot = MagicMock()
+        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        sender.bot = bot
+        plain_msg = self._make_msg(1, text="tail")
+        audio_msg = self._make_msg(2, text="caption")
+
+        async def download_media(msg, max_size_mb=0):
+            return {
+                1: [],
+                2: ["/tmp/audio.ogg"],
+            }[msg.id]
+
+        sender.downloader.download_media = AsyncMock(side_effect=download_media)
+        sender.config = {
+            "forward_config": {
+                "qq_merge_threshold": 2,
+                "qq_merge_chunk_size": 1,
+                "qq_merge_chunk_delay": 0,
+            }
+        }
+
+        await sender.send(
+            batches=[[plain_msg], [audio_msg]],
+            src_channel="demo",
+            display_name="demo",
+            effective_cfg={"effective_target_qq_sessions": ["test:GroupMessage:1"]},
+            involved_channels=None,
+        )
+
+        calls = sender.context.send_message.await_args_list
+        assert sender.context.send_message.await_count == 4
+        assert all(
+            not any(
+                type(component).__name__ == "Nodes" for component in call.args[1].chain
+            )
+            for call in calls[1:]
+        )
+        assert any(
+            len(call.args[1].chain) == 1
+            and type(call.args[1].chain[0]).__name__ == "Record"
+            for call in calls[1:]
+        )
+        assert any(
+            len(call.args[1].chain) == 1
+            and type(call.args[1].chain[0]).__name__ == "File"
+            for call in calls[1:]
         )
 
     @pytest.mark.asyncio

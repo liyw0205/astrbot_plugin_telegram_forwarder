@@ -10,6 +10,14 @@
 
 </div>
 
+### APK Fallback
+
+When QQ rejects `.apk/.xapk/.apkm/.apks` uploads with `rich media transfer failed`,
+you can now configure:
+
+* `apk_fallback_mode`: `关闭` / `直链` / `压缩包` / `直链优先，失败转压缩包`
+* `apk_direct_link_base_url`: the public base URL used by direct-link fallback, for example `https://files.example.com/downloads/`
+
 ## 📖 简介
 
 一款为 [AstrBot](https://astrbot.app) 设计的功能强大的 Telegram 消息转发插件。它支持自动监控指定的公开频道，并将其中的文字、图片、音频及文件实时同步至您的 QQ 群或另一个 Telegram 频道。
