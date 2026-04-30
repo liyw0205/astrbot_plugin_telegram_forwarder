@@ -29,6 +29,14 @@ def _set_component_attr(component: object, name: str, value: object) -> None:
                 component.__dict__[name] = value
 
 
+def _as_file_uri(path: str) -> str:
+    if "://" in path:
+        return path
+    if path.startswith("/"):
+        return f"file://{path}"
+    return f"file:///{path}"
+
+
 def map_path_with_config(
     *, fpath: str, context: Any, path_mapping: Callable | None
 ) -> str:
@@ -83,8 +91,11 @@ def dispatch_media_file(
     if ext in (".mp4", ".mkv", ".mov", ".webm", ".avi"):
         mapped = map_path(fpath)
         if mapped != fpath:
-            return [Video(file=f"file:///{mapped}")]
-        return [Video.fromFileSystem(fpath)]
+            video = Video(file=_as_file_uri(mapped))
+        else:
+            video = Video.fromFileSystem(fpath)
+        _set_component_attr(video, "_tgf_source_path", fpath)
+        return [video]
     mapped = map_path(fpath)
     component = _patch_file_to_dict(
         File(

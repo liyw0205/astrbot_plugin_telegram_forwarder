@@ -350,10 +350,20 @@ async def send_processed_batch(
         return
 
     if batch_data.get("contains_audio"):
+        async def send_common_components(components: list) -> None:
+            if not components:
+                return
+            chain = MessageChain()
+            chain.chain.extend(components)
+            await context.send_message(unified_msg_origin, chain)
+
+        deferred_common_nodes = []
         for node_components in all_nodes_data:
             common_components = []
+            sent_audio = False
             for component in node_components:
                 if isinstance(component, Record):
+                    sent_audio = True
                     chain = MessageChain([component])
                     await context.send_message(unified_msg_origin, chain)
                     path = getattr(component, "path", None)
@@ -372,10 +382,16 @@ async def send_processed_batch(
                     if isinstance(component, File):
                         component = normalize_file_payload(component)
                     common_components.append(component)
+            if sent_audio:
+                for deferred_components in deferred_common_nodes:
+                    await send_common_components(deferred_components)
+                deferred_common_nodes.clear()
+                await send_common_components(common_components)
+                continue
             if common_components:
-                chain = MessageChain()
-                chain.chain.extend(common_components)
-                await context.send_message(unified_msg_origin, chain)
+                deferred_common_nodes.append(common_components)
+        for deferred_components in deferred_common_nodes:
+            await send_common_components(deferred_components)
         logger.info(
             f"[QQSender] {node_name} -> {target_session}: 单条消息 (音频已拆分补文件)"
         )

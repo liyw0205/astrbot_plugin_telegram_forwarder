@@ -43,6 +43,34 @@ class TestDispatchMediaFile:
         result = sender._dispatch_media_file("/tmp/video.mp4")
         assert len(result) == 1
         assert type(result[0]).__name__ == "Video"
+        assert result[0].file == "file:///mapped/tmp/video.mp4"
+
+    def test_video_path_mapping_uses_valid_file_uri_for_posix_path(self, sender):
+        sender._map_path = lambda p: "/plugin_data/video.mp4"
+
+        result = sender._dispatch_media_file("/tmp/video.mp4")
+
+        assert len(result) == 1
+        assert type(result[0]).__name__ == "Video"
+        assert result[0].file == "file:///plugin_data/video.mp4"
+
+    def test_video_path_mapping_uses_file_uri_for_windows_path(self, sender):
+        sender._map_path = lambda p: "C:/plugin_data/video.mp4"
+
+        result = sender._dispatch_media_file("D:/tmp/video.mp4")
+
+        assert len(result) == 1
+        assert type(result[0]).__name__ == "Video"
+        assert result[0].file == "file:///C:/plugin_data/video.mp4"
+
+    def test_video_path_mapping_preserves_existing_uri(self, sender):
+        sender._map_path = lambda p: "file:///plugin_data/video.mp4"
+
+        result = sender._dispatch_media_file("/tmp/video.mp4")
+
+        assert len(result) == 1
+        assert type(result[0]).__name__ == "Video"
+        assert result[0].file == "file:///plugin_data/video.mp4"
 
     def test_unknown_ext_path_mapping(self, sender):
         sender._map_path = lambda p: "/mapped" + p
@@ -378,7 +406,7 @@ class TestAudioBatchSending:
         assert dispatcher_mock.await_args.kwargs["allow_forward_nodes"] is True
 
     @pytest.mark.asyncio
-    async def test_captioned_audio_batch_sends_text_record_and_file(
+    async def test_captioned_audio_batch_sends_record_file_then_caption(
         self, sender, qq_module
     ):
         sender.context.send_message = AsyncMock()
@@ -399,7 +427,67 @@ class TestAudioBatchSending:
             target_session="target",
         )
 
-        assert sender.context.send_message.await_count == 3
+        calls = sender.context.send_message.await_args_list
+        assert len(calls) == 3
+        assert type(calls[0].args[1].chain[0]).__name__ == "Record"
+        assert type(calls[1].args[1].chain[0]).__name__ == "File"
+        assert calls[2].args[1].chain[0].text == "caption"
+
+    @pytest.mark.asyncio
+    async def test_captioned_audio_batch_does_not_send_caption_when_record_fails(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(side_effect=RuntimeError("record failed"))
+        plain = qq_module.Plain("caption")
+        record = qq_module.Record.fromFileSystem("/tmp/audio.ogg")
+        record.path = "/tmp/audio.ogg"
+        sender._map_path = lambda p: p
+
+        with pytest.raises(RuntimeError, match="record failed"):
+            await sender._send_processed_batch(
+                batch_data={
+                    "nodes_data": [[plain], [record]],
+                    "contains_audio": True,
+                },
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+        calls = sender.context.send_message.await_args_list
+        assert len(calls) == 1
+        assert all(type(call.args[1].chain[0]).__name__ != "Plain" for call in calls)
+
+    @pytest.mark.asyncio
+    async def test_captioned_audio_batch_does_not_send_caption_when_file_fails(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(
+            side_effect=[None, RuntimeError("file failed")]
+        )
+        plain = qq_module.Plain("caption")
+        record = qq_module.Record.fromFileSystem("/tmp/audio.ogg")
+        record.path = "/tmp/audio.ogg"
+        sender._map_path = lambda p: p
+
+        with pytest.raises(RuntimeError, match="file failed"):
+            await sender._send_processed_batch(
+                batch_data={
+                    "nodes_data": [[plain], [record]],
+                    "contains_audio": True,
+                },
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+        calls = sender.context.send_message.await_args_list
+        assert len(calls) == 2
+        assert type(calls[0].args[1].chain[0]).__name__ == "Record"
+        assert type(calls[1].args[1].chain[0]).__name__ == "File"
+        assert all(type(call.args[1].chain[0]).__name__ != "Plain" for call in calls)
 
     @pytest.mark.asyncio
     async def test_file_send_logs_final_payload_with_file_file__and_url(
@@ -722,7 +810,9 @@ class TestAudioBatchSending:
         assert sender.context.send_message.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_audio_batch_preserves_node_order(self, sender, qq_module):
+    async def test_audio_batch_preserves_audio_before_caption_for_each_pair(
+        self, sender, qq_module
+    ):
         sender.context.send_message = AsyncMock()
         sender._map_path = lambda p: p
         plain_a = qq_module.Plain("caption-a")
@@ -744,12 +834,12 @@ class TestAudioBatchSending:
         )
 
         calls = sender.context.send_message.await_args_list
-        assert calls[0].args[1].chain[0].text == "caption-a"
-        assert type(calls[1].args[1].chain[0]).__name__ == "Record"
-        assert type(calls[2].args[1].chain[0]).__name__ == "File"
-        assert calls[3].args[1].chain[0].text == "caption-b"
-        assert type(calls[4].args[1].chain[0]).__name__ == "Record"
-        assert type(calls[5].args[1].chain[0]).__name__ == "File"
+        assert type(calls[0].args[1].chain[0]).__name__ == "Record"
+        assert type(calls[1].args[1].chain[0]).__name__ == "File"
+        assert calls[2].args[1].chain[0].text == "caption-a"
+        assert type(calls[3].args[1].chain[0]).__name__ == "Record"
+        assert type(calls[4].args[1].chain[0]).__name__ == "File"
+        assert calls[5].args[1].chain[0].text == "caption-b"
 
 
 class TestQQBatchBuilder:
