@@ -18,6 +18,7 @@ from astrbot.api.message_components import File, Node, Nodes, Record, Video
 
 from .qq_batch_builder import ProcessedBatchData
 from .qq_media import _patch_file_to_dict
+from .qq_types import SendMessageFn
 
 
 class SendProcessedBatchFn(Protocol):
@@ -48,14 +49,6 @@ class RecordTargetFailureFn(Protocol):
     ) -> None: ...
 
 
-class MessageContext(Protocol):
-    """具备发送消息链能力的上下文协议。"""
-
-    async def send_message(
-        self, unified_msg_origin: str, message_chain: MessageChain
-    ) -> None: ...
-
-
 @dataclass
 class DispatchResult:
     target_successes: dict[int, set[str]]
@@ -82,7 +75,7 @@ async def dispatch_processed_batches_to_targets(
     record_target_failure: RecordTargetFailureFn,
     classify_send_error: Callable[[Exception], str],
     send_processed_batch_fn: SendProcessedBatchFn,
-    send_message_fn: Callable[[str, MessageChain], Awaitable[None]],
+    send_message_fn: SendMessageFn,
     fail_fast_limit: int,
     target_circuit_fail_threshold: int,
     target_circuit_cooldown_sec: int,
@@ -168,7 +161,11 @@ async def dispatch_processed_batches_to_targets(
                             ]
                             message_chain = MessageChain()
                             message_chain.chain.append(Nodes(nodes_list))
-                            await send_message_fn(unified_msg_origin, message_chain)
+                            await send_message_fn(
+                                unified_msg_origin,
+                                message_chain,
+                                send_kind="big_merge",
+                            )
                         else:
                             await send_processed_batch_fn(
                                 batch_data=chunk_batches[0],
@@ -291,7 +288,7 @@ async def send_processed_batch(
     self_id: int,
     node_name: str,
     target_session: str,
-    context: MessageContext,
+    send_message_fn: SendMessageFn,
     map_path: Callable[[str], str],
     should_merge: Callable[[ProcessedBatchData], bool],
     allow_forward_nodes: bool = True,
@@ -343,7 +340,11 @@ async def send_processed_batch(
             Node(uin=self_id, name=node_name, content=nc) for nc in all_nodes_data
         ]
         message_chain.chain.append(Nodes(nodes_list))
-        await context.send_message(unified_msg_origin, message_chain)
+        await send_message_fn(
+            unified_msg_origin,
+            message_chain,
+            send_kind="album_merge",
+        )
         logger.info(
             f"[QQSender] {node_name} -> {target_session}: 相册合并 ({len(all_nodes_data)} 节点)"
         )
@@ -355,7 +356,11 @@ async def send_processed_batch(
                 return
             chain = MessageChain()
             chain.chain.extend(components)
-            await context.send_message(unified_msg_origin, chain)
+            await send_message_fn(
+                unified_msg_origin,
+                chain,
+                send_kind="plain",
+            )
 
         deferred_common_nodes = []
         for node_components in all_nodes_data:
@@ -364,9 +369,26 @@ async def send_processed_batch(
             for component in node_components:
                 if isinstance(component, Record):
                     sent_audio = True
-                    chain = MessageChain([component])
-                    await context.send_message(unified_msg_origin, chain)
+                    for deferred_components in deferred_common_nodes:
+                        await send_common_components(deferred_components)
+                    deferred_common_nodes.clear()
+                    await send_common_components(common_components)
+                    common_components.clear()
+
                     path = getattr(component, "path", None)
+                    try:
+                        chain = MessageChain([component])
+                        await send_message_fn(
+                            unified_msg_origin,
+                            chain,
+                            send_kind="audio_record",
+                        )
+                    except Exception as e:
+                        if not path:
+                            raise
+                        logger.warning(
+                            f"[QQSender] 语音条发送失败，继续发送源文件: target={target_session}, error={e}"
+                        )
                     if path:
                         mapped = map_path(path)
                         file_component = File(
@@ -377,15 +399,16 @@ async def send_processed_batch(
                         _patch_file_to_dict(file_component)
                         log_file_payload(file_component)
                         file_chain = MessageChain([file_component])
-                        await context.send_message(unified_msg_origin, file_chain)
+                        await send_message_fn(
+                            unified_msg_origin,
+                            file_chain,
+                            send_kind="audio_file",
+                        )
                 else:
                     if isinstance(component, File):
                         component = normalize_file_payload(component)
                     common_components.append(component)
             if sent_audio:
-                for deferred_components in deferred_common_nodes:
-                    await send_common_components(deferred_components)
-                deferred_common_nodes.clear()
                 await send_common_components(common_components)
                 continue
             if common_components:
@@ -412,7 +435,11 @@ async def send_processed_batch(
                         log_file_payload(c)
                     chain = MessageChain([c])
                     try:
-                        await context.send_message(unified_msg_origin, chain)
+                        await send_message_fn(
+                            unified_msg_origin,
+                            chain,
+                            send_kind="special_media",
+                        )
                     except Exception as send_error:
                         logger.warning(
                             f"[QQSender] Special media send failed: "
@@ -446,12 +473,20 @@ async def send_processed_batch(
             if common_components:
                 chain = MessageChain()
                 chain.chain.extend(common_components)
-                await context.send_message(unified_msg_origin, chain)
+                await send_message_fn(
+                    unified_msg_origin,
+                    chain,
+                    send_kind="plain",
+                )
             continue
 
         message_chain = MessageChain()
         message_chain.chain.extend(node_components)
-        await context.send_message(unified_msg_origin, message_chain)
+        await send_message_fn(
+            unified_msg_origin,
+            message_chain,
+            send_kind="plain",
+        )
 
     if batch_has_special:
         logger.info(

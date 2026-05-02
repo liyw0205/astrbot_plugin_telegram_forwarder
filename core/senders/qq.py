@@ -6,12 +6,14 @@
 
 import asyncio
 import os
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from telethon.tl.types import Message
 
 from astrbot.api import AstrBotConfig, logger, star
+from astrbot.api.event import MessageChain
 from astrbot.api.message_components import Plain
 
 try:
@@ -66,6 +68,7 @@ from .qq_targets import (
     session_platform_ids,
     split_qq_targets,
 )
+from .qq_types import SendKind
 
 _ = Plain, ProcessedBatch, File, Image, Record, Video
 @dataclass(frozen=True)
@@ -147,6 +150,31 @@ class QQSender:
             audio_mode=audio_mode,
         )
 
+    async def _send_with_timeout(
+        self,
+        unified_msg_origin: str,
+        message_chain: MessageChain,
+        *,
+        send_kind: SendKind,
+        timeout_sec: float = 30.0,
+    ) -> None:
+        started_at = time.monotonic()
+        try:
+            await asyncio.wait_for(
+                self.context.send_message(unified_msg_origin, message_chain),
+                timeout=timeout_sec,
+            )
+        except asyncio.TimeoutError:
+            duration = time.monotonic() - started_at
+            logger.warning(
+                f"[QQSender] send kind={send_kind} target={unified_msg_origin} timeout after {duration:.3f}s"
+            )
+            raise
+        duration = time.monotonic() - started_at
+        logger.info(
+            f"[QQSender] send kind={send_kind} target={unified_msg_origin} duration={duration:.3f}s"
+        )
+
     async def _handle_file_send_failure(
         self,
         component: File,
@@ -164,7 +192,7 @@ class QQSender:
             batch_data=batch_data,
             unified_msg_origin=unified_msg_origin,
             target_session=target_session,
-            send_message_fn=self.context.send_message,
+            send_message_fn=self._send_with_timeout,
             map_path=self._map_path,
             classify_send_error=self._classify_send_error,
             plugin_data_dir=getattr(self.downloader, "plugin_data_dir", None),
@@ -216,7 +244,7 @@ class QQSender:
             self_id=self_id,
             node_name=node_name,
             target_session=target_session,
-            context=self.context,
+            send_message_fn=self._send_with_timeout,
             map_path=self._map_path,
             should_merge=self._should_merge_batch_nodes,
             allow_forward_nodes=allow_forward_nodes,
@@ -532,7 +560,7 @@ class QQSender:
             record_target_failure=self._record_target_failure,
             classify_send_error=self._classify_send_error,
             send_processed_batch_fn=self._send_processed_batch,
-            send_message_fn=self.context.send_message,
+            send_message_fn=self._send_with_timeout,
             fail_fast_limit=fail_fast_limit,
             target_circuit_fail_threshold=target_circuit_fail_threshold,
             target_circuit_cooldown_sec=target_circuit_cooldown_sec,

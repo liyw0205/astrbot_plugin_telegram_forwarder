@@ -3,7 +3,7 @@
 import os
 import posixpath
 import zipfile
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -13,6 +13,7 @@ from astrbot.api.message_components import File, Plain
 
 from .qq_batch_builder import ProcessedBatchData
 from .qq_media import _patch_file_to_dict
+from .qq_types import SendMessageFn
 
 APK_FALLBACK_MODE_ALIASES = {
     "": "off",
@@ -165,7 +166,7 @@ async def handle_apk_file_send_failure(
     batch_data: ProcessedBatchData,
     unified_msg_origin: str,
     target_session: str,
-    send_message_fn: Callable[[str, MessageChain], Awaitable[None]],
+    send_message_fn: SendMessageFn,
     map_path: Callable[[str], str],
     classify_send_error: Callable[[Exception], str],
     plugin_data_dir: str | None,
@@ -188,6 +189,7 @@ async def handle_apk_file_send_failure(
                     )
                 ]
             ),
+            send_kind="fallback_link",
         )
         logger.warning(
             f"[QQSender] APK 文件发送失败，已降级为直链: target={target_session}, file={original_name}"
@@ -211,7 +213,11 @@ async def handle_apk_file_send_failure(
     archive_component = _build_file_component(
         archive_path, archive_name, map_path=map_path
     )
-    await send_message_fn(unified_msg_origin, MessageChain([archive_component]))
+    await send_message_fn(
+        unified_msg_origin,
+        MessageChain([archive_component]),
+        send_kind="fallback_zip",
+    )
     logger.warning(
         f"[QQSender] APK 文件发送失败，已降级为压缩包: target={target_session}, file={original_name}, archive={archive_name}"
     )
