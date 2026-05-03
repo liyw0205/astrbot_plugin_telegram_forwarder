@@ -333,6 +333,14 @@ async def send_processed_batch(
             f"name={getattr(component, 'name', None)!r}"
         )
 
+    def safe_file_size(path: str | None) -> int | None:
+        if not path:
+            return None
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
+
     all_nodes_data = batch_data["nodes_data"]
     if allow_forward_nodes and should_merge(batch_data):
         message_chain = MessageChain()
@@ -439,6 +447,20 @@ async def send_processed_batch(
                     if isinstance(c, File):
                         c = normalize_file_payload(c)
                         log_file_payload(c)
+                    if isinstance(c, Video):
+                        source_path = getattr(
+                            c, "_tgf_source_path", getattr(c, "path", None)
+                        )
+                        logger.info(
+                            f"[QQSender] Video special media ready: "
+                            f"target={target_session}, "
+                            f"batch_index={batch_data.get('batch_index')}, "
+                            f"node_types={component_types}, "
+                            f"source_path={source_path!r}, "
+                            f"payload_file={getattr(c, 'file', None)!r}, "
+                            f"file_size={safe_file_size(source_path)}, "
+                            f"has_plain_text_same_batch={any(not isinstance(x, special_types) for x in node_components)}"
+                        )
                     chain = MessageChain([c])
                     try:
                         await send_message_fn(
@@ -477,10 +499,13 @@ async def send_processed_batch(
                                 c, "_tgf_source_path", getattr(c, "path", None)
                             )
                             if path:
-                                logger.warning(
-                                    f"[QQSender] 视频发送失败，继续发送源文件: target={target_session}, error_type={type(send_error).__name__}, error={send_error!r}"
-                                )
                                 mapped = map_path(path)
+                                logger.warning(
+                                    f"[QQSender] 视频发送失败，继续发送源文件: target={target_session}, "
+                                    f"source_path={path!r}, mapped_path={mapped!r}, "
+                                    f"file_size={safe_file_size(path)}, "
+                                    f"error_type={type(send_error).__name__}, error={send_error!r}"
+                                )
                                 file_component = File(
                                     file=mapped,
                                     url="",
@@ -496,7 +521,10 @@ async def send_processed_batch(
                                     )
                                 except Exception as fallback_error:
                                     logger.error(
-                                        f"[QQSender] 视频源文件补发失败: target={target_session}, error_type={type(fallback_error).__name__}, error={fallback_error!r}"
+                                        f"[QQSender] 视频源文件补发失败: target={target_session}, "
+                                        f"source_path={path!r}, mapped_path={mapped!r}, "
+                                        f"file_size={safe_file_size(path)}, "
+                                        f"error_type={type(fallback_error).__name__}, error={fallback_error!r}"
                                     )
                                     raise
                                 continue

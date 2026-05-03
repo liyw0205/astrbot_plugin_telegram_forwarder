@@ -159,6 +159,15 @@ class QQSender:
         timeout_sec: float = 30.0,
     ) -> None:
         started_at = time.monotonic()
+        components = list(getattr(message_chain, "chain", []))
+        component_types = [type(component).__name__ for component in components]
+        primary_component = components[0] if components else None
+        source_path = getattr(
+            primary_component,
+            "_tgf_source_path",
+            getattr(primary_component, "path", None),
+        )
+        payload_file = getattr(primary_component, "file", None)
         try:
             await asyncio.wait_for(
                 self.context.send_message(unified_msg_origin, message_chain),
@@ -167,12 +176,16 @@ class QQSender:
         except asyncio.TimeoutError:
             duration = time.monotonic() - started_at
             logger.warning(
-                f"[QQSender] send kind={send_kind} target={unified_msg_origin} timeout after {duration:.3f}s"
+                f"[QQSender] send kind={send_kind} target={unified_msg_origin} "
+                f"component_types={component_types} payload_file={payload_file!r} "
+                f"source_path={source_path!r} timeout after {duration:.3f}s"
             )
             raise
         duration = time.monotonic() - started_at
         logger.info(
-            f"[QQSender] send kind={send_kind} target={unified_msg_origin} duration={duration:.3f}s"
+            f"[QQSender] send kind={send_kind} target={unified_msg_origin} "
+            f"component_types={component_types} payload_file={payload_file!r} "
+            f"source_path={source_path!r} duration={duration:.3f}s"
         )
 
     async def _handle_file_send_failure(

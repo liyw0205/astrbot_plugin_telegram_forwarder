@@ -10,6 +10,7 @@ from collections.abc import Callable
 from types import MethodType
 from typing import Any
 
+from astrbot.api import logger
 from astrbot.api.message_components import File, Image, Plain, Record, Video
 
 from .qq_batch_builder import ProcessedBatchData
@@ -35,6 +36,15 @@ def _as_file_uri(path: str) -> str:
     if path.startswith("/"):
         return f"file://{path}"
     return f"file:///{path}"
+
+
+def _safe_file_size(path: str | None) -> int | None:
+    if not path:
+        return None
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
 
 
 def map_path_with_config(
@@ -95,6 +105,12 @@ def dispatch_media_file(
         else:
             video = Video.fromFileSystem(fpath)
         _set_component_attr(video, "_tgf_source_path", fpath)
+        logger.info(
+            f"[QQSender] Video dispatch prepared: source_path={fpath!r}, "
+            f"mapped_path={mapped!r}, file={getattr(video, 'file', None)!r}, "
+            f"ext={ext!r}, file_size={_safe_file_size(fpath)}, "
+            f"mapped_changed={mapped != fpath}"
+        )
         return [video]
     mapped = map_path(fpath)
     component = _patch_file_to_dict(
