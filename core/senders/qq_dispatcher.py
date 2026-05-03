@@ -387,7 +387,7 @@ async def send_processed_batch(
                         if not path:
                             raise
                         logger.warning(
-                            f"[QQSender] 语音条发送失败，继续发送源文件: target={target_session}, error={e}"
+                            f"[QQSender] 语音条发送失败，继续发送源文件: target={target_session}, error_type={type(e).__name__}, error={e!r}"
                         )
                     if path:
                         mapped = map_path(path)
@@ -452,7 +452,7 @@ async def send_processed_batch(
                             f"url={getattr(c, 'url', None)!r}, "
                             f"name={getattr(c, 'name', None)!r}, "
                             f"source_path={getattr(c, '_tgf_source_path', getattr(c, 'path', None))!r}, "
-                            f"error={send_error}"
+                            f"error_type={type(send_error).__name__}, error={send_error!r}"
                         )
                         if (
                             isinstance(c, File)
@@ -472,7 +472,7 @@ async def send_processed_batch(
                             )
                             if path:
                                 logger.warning(
-                                    f"[QQSender] 视频发送失败，继续发送源文件: target={target_session}, error={send_error}"
+                                    f"[QQSender] 视频发送失败，继续发送源文件: target={target_session}, error_type={type(send_error).__name__}, error={send_error!r}"
                                 )
                                 mapped = map_path(path)
                                 file_component = File(
@@ -490,7 +490,7 @@ async def send_processed_batch(
                                     )
                                 except Exception as fallback_error:
                                     logger.error(
-                                        f"[QQSender] 视频源文件补发失败: target={target_session}, error={fallback_error}"
+                                        f"[QQSender] 视频源文件补发失败: target={target_session}, error_type={type(fallback_error).__name__}, error={fallback_error!r}"
                                     )
                                     raise
                                 continue

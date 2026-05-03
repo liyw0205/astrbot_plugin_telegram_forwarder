@@ -875,6 +875,35 @@ class TestAudioBatchSending:
         assert sender.context.send_message.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_audio_record_timeout_log_includes_exception_type(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(side_effect=[asyncio.TimeoutError(), None])
+        qq_module.logger.warning.reset_mock()
+        record = qq_module.Record.fromFileSystem("/tmp/audio.ogg")
+        record.path = "/tmp/audio.ogg"
+        record.file = "file:////tmp/audio.ogg"
+        sender._map_path = lambda p: p
+
+        await sender._send_processed_batch(
+            batch_data={
+                "nodes_data": [[record]],
+                "contains_audio": True,
+            },
+            unified_msg_origin="target",
+            self_id=1,
+            node_name="bot",
+            target_session="target",
+        )
+
+        warning_messages = [
+            call.args[0]
+            for call in qq_module.logger.warning.call_args_list
+            if call.args and "语音条发送失败" in call.args[0]
+        ]
+        assert any("error_type=TimeoutError" in message for message in warning_messages)
+
+    @pytest.mark.asyncio
     async def test_audio_batch_sends_caption_record_file_for_each_pair(
         self, sender, qq_module
     ):
@@ -1019,8 +1048,15 @@ class TestVideoBatchSending:
             if call.args
         ]
         assert any(
+            "Special media send failed" in message
+            and "type=Video" in message
+            and "error_type=RuntimeError" in message
+            for message in warning_messages
+        )
+        assert any(
             "视频发送失败，继续发送源文件" in message
             and "target=target" in message
+            and "error_type=RuntimeError" in message
             and "rich media transfer failed" in message
             for message in warning_messages
         )
@@ -1063,6 +1099,7 @@ class TestVideoBatchSending:
                 RuntimeError("file failed"),
             ]
         )
+        qq_module.logger.error.reset_mock()
         sender._map_path = lambda path: path.replace("/tmp", "/mapped/tmp", 1)
         video = qq_module.Video.fromFileSystem("/tmp/video.mp4")
         video.path = "/tmp/video.mp4"
@@ -1085,6 +1122,17 @@ class TestVideoBatchSending:
         assert len(calls) == 2
         assert type(calls[0].args[1].chain[0]).__name__ == "Video"
         assert type(calls[1].args[1].chain[0]).__name__ == "File"
+        error_messages = [
+            call.args[0]
+            for call in qq_module.logger.error.call_args_list
+            if call.args
+        ]
+        assert any(
+            "视频源文件补发失败" in message
+            and "error_type=RuntimeError" in message
+            and "file failed" in message
+            for message in error_messages
+        )
 
 
 class TestQQBatchBuilder:
