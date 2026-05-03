@@ -1707,8 +1707,12 @@ class Forwarder:
                         "offset_date": start_date,
                         "limit": 1000,  # 冷启动设置安全上限
                     }
+                    from datetime import timezone as _tz
+
+                    _beijing_tz = _tz(timedelta(hours=8))
+                    _display_date = start_date.astimezone(_beijing_tz)
                     logger.info(
-                        f"[Fetch] {channel_name}: 首次运行，执行冷启动，从 {start_date.strftime('%Y-%m-%d')} 开始拉取历史消息"
+                        f"[Fetch] {channel_name}: 首次运行，执行冷启动，从 {_display_date.strftime('%Y-%m-%d')} 开始拉取历史消息"
                     )
                 else:
                     # 无冷启动设置：初始化 last_id 为最新消息 ID，不搬运旧消息
