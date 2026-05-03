@@ -605,7 +605,9 @@ class TestAudioBatchSending:
             )
 
         warning_messages = [
-            call.args[0] for call in qq_module.logger.warning.call_args_list if call.args
+            call.args[0]
+            for call in qq_module.logger.warning.call_args_list
+            if call.args
         ]
         assert any(
             "batch_index=0" in message
@@ -754,7 +756,9 @@ class TestAudioBatchSending:
             )
 
             assert sender.context.send_message.await_count == 2
-            sent_component = sender.context.send_message.await_args_list[1].args[1].chain[0]
+            sent_component = (
+                sender.context.send_message.await_args_list[1].args[1].chain[0]
+            )
             assert type(sent_component).__name__ == "File"
             assert sent_component.name == "base.apk.zip"
             assert len(batch_data["local_files"]) == 2
@@ -906,7 +910,9 @@ class TestAudioBatchSending:
 
 class TestQQSendWrapper:
     @pytest.mark.asyncio
-    async def test_send_with_timeout_logs_send_kind_and_duration(self, sender, qq_module):
+    async def test_send_with_timeout_logs_send_kind_and_duration(
+        self, sender, qq_module
+    ):
         sender.context.send_message = AsyncMock()
         qq_module.logger.info.reset_mock()
         message_chain = MagicMock(name="message_chain")
@@ -926,7 +932,9 @@ class TestQQSendWrapper:
         )
 
     @pytest.mark.asyncio
-    async def test_send_with_timeout_raises_timeout_for_slow_send(self, sender, qq_module):
+    async def test_send_with_timeout_raises_timeout_for_slow_send(
+        self, sender, qq_module
+    ):
         qq_module.logger.info.reset_mock()
 
         async def slow_send(*args, **kwargs):
@@ -944,7 +952,9 @@ class TestQQSendWrapper:
             )
 
     @pytest.mark.asyncio
-    async def test_send_processed_batch_logs_special_media_send_kind(self, sender, qq_module):
+    async def test_send_processed_batch_logs_special_media_send_kind(
+        self, sender, qq_module
+    ):
         sender.context.send_message = AsyncMock()
         qq_module.logger.info.reset_mock()
         file_component = qq_module.File(file="/tmp/base.apk", name="base.apk")
@@ -969,6 +979,112 @@ class TestQQSendWrapper:
             for call in qq_module.logger.info.call_args_list
             if call.args
         )
+
+
+class TestVideoBatchSending:
+    @pytest.mark.asyncio
+    async def test_video_batch_sends_source_file_after_video_failure(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(
+            side_effect=[RuntimeError("rich media transfer failed"), None]
+        )
+        sender._map_path = lambda path: path.replace("/tmp", "/mapped/tmp", 1)
+        video = qq_module.Video.fromFileSystem("/tmp/video.mp4")
+        video.path = "/tmp/video.mp4"
+
+        await sender._send_processed_batch(
+            batch_data={
+                "batch_index": 0,
+                "nodes_data": [[video]],
+                "contains_audio": False,
+                "local_files": [],
+            },
+            unified_msg_origin="target",
+            self_id=1,
+            node_name="bot",
+            target_session="target",
+        )
+
+        calls = sender.context.send_message.await_args_list
+        assert len(calls) == 2
+        assert type(calls[0].args[1].chain[0]).__name__ == "Video"
+        assert type(calls[1].args[1].chain[0]).__name__ == "File"
+        assert calls[1].args[1].chain[0].file == "/mapped/tmp/video.mp4"
+        assert calls[1].args[1].chain[0].name == "video.mp4"
+
+        warning_messages = [
+            call.args[0]
+            for call in qq_module.logger.warning.call_args_list
+            if call.args
+        ]
+        assert any(
+            "视频发送失败，继续发送源文件" in message
+            and "target=target" in message
+            and "rich media transfer failed" in message
+            for message in warning_messages
+        )
+
+    @pytest.mark.asyncio
+    async def test_video_batch_reraises_video_failure_without_source_path(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(
+            side_effect=RuntimeError("rich media transfer failed")
+        )
+        video = qq_module.Video(file="")
+        video.path = None
+
+        with pytest.raises(RuntimeError, match="rich media transfer failed"):
+            await sender._send_processed_batch(
+                batch_data={
+                    "batch_index": 0,
+                    "nodes_data": [[video]],
+                    "contains_audio": False,
+                    "local_files": [],
+                },
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+        calls = sender.context.send_message.await_args_list
+        assert len(calls) == 1
+        assert type(calls[0].args[1].chain[0]).__name__ == "Video"
+
+    @pytest.mark.asyncio
+    async def test_video_batch_reraises_when_fallback_file_send_fails(
+        self, sender, qq_module
+    ):
+        sender.context.send_message = AsyncMock(
+            side_effect=[
+                RuntimeError("rich media transfer failed"),
+                RuntimeError("file failed"),
+            ]
+        )
+        sender._map_path = lambda path: path.replace("/tmp", "/mapped/tmp", 1)
+        video = qq_module.Video.fromFileSystem("/tmp/video.mp4")
+        video.path = "/tmp/video.mp4"
+
+        with pytest.raises(RuntimeError, match="file failed"):
+            await sender._send_processed_batch(
+                batch_data={
+                    "batch_index": 0,
+                    "nodes_data": [[video]],
+                    "contains_audio": False,
+                    "local_files": [],
+                },
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+        calls = sender.context.send_message.await_args_list
+        assert len(calls) == 2
+        assert type(calls[0].args[1].chain[0]).__name__ == "Video"
+        assert type(calls[1].args[1].chain[0]).__name__ == "File"
 
 
 class TestQQBatchBuilder:

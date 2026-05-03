@@ -10,6 +10,7 @@ SendKind = Literal[
     "plain",
     "audio_record",
     "audio_file",
+    "video_file",
     "special_media",
     "fallback_link",
     "fallback_zip",

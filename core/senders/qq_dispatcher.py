@@ -466,6 +466,34 @@ async def send_processed_batch(
                             )
                         ):
                             continue
+                        if isinstance(c, Video):
+                            path = getattr(
+                                c, "_tgf_source_path", getattr(c, "path", None)
+                            )
+                            if path:
+                                logger.warning(
+                                    f"[QQSender] 视频发送失败，继续发送源文件: target={target_session}, error={send_error}"
+                                )
+                                mapped = map_path(path)
+                                file_component = File(
+                                    file=mapped,
+                                    url="",
+                                    name=os.path.basename(path),
+                                )
+                                _patch_file_to_dict(file_component)
+                                log_file_payload(file_component)
+                                try:
+                                    await send_message_fn(
+                                        unified_msg_origin,
+                                        MessageChain([file_component]),
+                                        send_kind="video_file",
+                                    )
+                                except Exception as fallback_error:
+                                    logger.error(
+                                        f"[QQSender] 视频源文件补发失败: target={target_session}, error={fallback_error}"
+                                    )
+                                    raise
+                                continue
                         raise
             common_components = [
                 c for c in node_components if not isinstance(c, special_types)
