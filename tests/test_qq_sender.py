@@ -527,6 +527,7 @@ class TestAudioBatchSending:
         sender.context.send_message = AsyncMock(
             side_effect=[None, None, RuntimeError("file failed")]
         )
+        qq_module.logger.error.reset_mock()
         plain = qq_module.Plain("caption")
         record = qq_module.Record.fromFileSystem("/tmp/audio.ogg")
         record.path = "/tmp/audio.ogg"
@@ -549,6 +550,17 @@ class TestAudioBatchSending:
         assert calls[0].args[1].chain[0].text == "caption"
         assert type(calls[1].args[1].chain[0]).__name__ == "Record"
         assert type(calls[2].args[1].chain[0]).__name__ == "File"
+        error_messages = [
+            call.args[0]
+            for call in qq_module.logger.error.call_args_list
+            if call.args
+        ]
+        assert any(
+            "音频源文件补发失败" in message
+            and "error_type=RuntimeError" in message
+            and "file failed" in message
+            for message in error_messages
+        )
 
     @pytest.mark.asyncio
     async def test_file_send_logs_final_payload_with_file_file__and_url(

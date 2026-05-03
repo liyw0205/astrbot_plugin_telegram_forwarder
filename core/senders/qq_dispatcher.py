@@ -399,11 +399,17 @@ async def send_processed_batch(
                         _patch_file_to_dict(file_component)
                         log_file_payload(file_component)
                         file_chain = MessageChain([file_component])
-                        await send_message_fn(
-                            unified_msg_origin,
-                            file_chain,
-                            send_kind="audio_file",
-                        )
+                        try:
+                            await send_message_fn(
+                                unified_msg_origin,
+                                file_chain,
+                                send_kind="audio_file",
+                            )
+                        except Exception as fallback_error:
+                            logger.error(
+                                f"[QQSender] 音频源文件补发失败: target={target_session}, error_type={type(fallback_error).__name__}, error={fallback_error!r}"
+                            )
+                            raise
                 else:
                     if isinstance(component, File):
                         component = normalize_file_payload(component)
