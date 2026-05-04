@@ -368,6 +368,13 @@ async def login(self, event: AstrMessageEvent, args: str = ""):
         yield result
 
 
+@tg.command("debug")
+async def debug(self, event: AstrMessageEvent, action: str | None = None):
+    """管理 QQ 发送诊断日志"""
+    async for result in self.command_handler.debug(event, action):
+        yield result
+
+
 @tg.command("help")
 async def show_help(self, event: AstrMessageEvent):
     """显示插件命令帮助"""

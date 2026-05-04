@@ -954,6 +954,7 @@ class TestQQSendWrapper:
     async def test_send_with_timeout_logs_send_kind_and_duration(
         self, sender, qq_module
     ):
+        sender.config["debug_enabled_default"] = True
         sender.context.send_message = AsyncMock()
         qq_module.logger.info.reset_mock()
         message_chain = MagicMock(name="message_chain")
@@ -996,6 +997,7 @@ class TestQQSendWrapper:
     async def test_send_processed_batch_logs_special_media_send_kind(
         self, sender, qq_module
     ):
+        sender.config["debug_enabled_default"] = True
         sender.context.send_message = AsyncMock()
         qq_module.logger.info.reset_mock()
         file_component = qq_module.File(file="/tmp/base.apk", name="base.apk")

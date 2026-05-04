@@ -73,6 +73,7 @@ def dispatch_media_file(
     *,
     map_path: Callable[[str], str],
     audio_mode: str = "record",
+    log_policy: object | None = None,
 ) -> list[object]:
     """把本地媒体文件路径转换为 AstrBot QQ 消息组件。
 
@@ -105,12 +106,22 @@ def dispatch_media_file(
         else:
             video = Video.fromFileSystem(fpath)
         _set_component_attr(video, "_tgf_source_path", fpath)
-        logger.info(
-            f"[QQSender] Video dispatch prepared: source_path={fpath!r}, "
-            f"mapped_path={mapped!r}, file={getattr(video, 'file', None)!r}, "
-            f"ext={ext!r}, file_size={_safe_file_size(fpath)}, "
-            f"mapped_changed={mapped != fpath}"
-        )
+        if log_policy is not None:
+            log_policy.log_video_dispatch_prepared(
+                source_path=fpath,
+                mapped_path=mapped,
+                file=getattr(video, "file", None),
+                ext=ext,
+                file_size=_safe_file_size(fpath),
+                mapped_changed=mapped != fpath,
+            )
+        else:
+            logger.info(
+                f"[QQSender] Video dispatch prepared: source_path={fpath!r}, "
+                f"mapped_path={mapped!r}, file={getattr(video, 'file', None)!r}, "
+                f"ext={ext!r}, file_size={_safe_file_size(fpath)}, "
+                f"mapped_changed={mapped != fpath}"
+            )
         return [video]
     mapped = map_path(fpath)
     component = _patch_file_to_dict(

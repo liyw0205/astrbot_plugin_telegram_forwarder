@@ -45,6 +45,12 @@
         "hint": "部分网络环境访问 Telegram 需要代理，例如 http://127.0.0.1:7890",
         "default": ""
     },
+    "debug_enabled_default": {
+        "description": "QQ 发送诊断日志",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，QQ 发送路径将输出详细诊断日志（包含组件类型、文件路径、耗时等），便于排查发送问题。也可通过 /tg debug 命令临时切换"
+    },
     "source_channels": {
         "description": "源频道配置列表",
         "type": "template_list",

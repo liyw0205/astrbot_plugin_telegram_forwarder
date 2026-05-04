@@ -79,6 +79,7 @@ async def dispatch_processed_batches_to_targets(
     fail_fast_limit: int,
     target_circuit_fail_threshold: int,
     target_circuit_cooldown_sec: int,
+    log_policy: object | None = None,
 ) -> DispatchResult:
     """把预处理后的批次发送到每一个 QQ 目标会话。
 
@@ -179,11 +180,22 @@ async def dispatch_processed_batches_to_targets(
                             target_successes[batch_index].add(target_session)
                         record_target_success(target_session)
                         consecutive_failures = 0
-                        logger.info(
-                            f"[QQSender] {node_name} -> {target_session}: "
-                            f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
-                            f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
-                        )
+                        if log_policy is not None:
+                            log_policy.log_merge_send(
+                                node_name=node_name,
+                                target=target_session,
+                                label=f"{'混合' if is_mixed_big_merge else ''}大合并转发",
+                                chunk_idx=chunk_idx,
+                                total_chunks=total_chunks,
+                                node_count=len(chunk_nodes),
+                                batch_count=len(chunk_batches),
+                            )
+                        else:
+                            logger.info(
+                                f"[QQSender] {node_name} -> {target_session}: "
+                                f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
+                                f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
+                            )
                         if chunk_idx < total_chunks:
                             await asyncio.sleep(chunk_delay)
                     except Exception as e:
@@ -296,6 +308,7 @@ async def send_processed_batch(
         [File, Exception, ProcessedBatchData, str, str], Awaitable[bool]
     ]
     | None = None,
+    log_policy: object | None = None,
 ) -> None:
     """把单个预处理批次发送到单个 QQ 目标。
 
@@ -353,9 +366,20 @@ async def send_processed_batch(
             message_chain,
             send_kind="album_merge",
         )
-        logger.info(
-            f"[QQSender] {node_name} -> {target_session}: 相册合并 ({len(all_nodes_data)} 节点)"
-        )
+        if log_policy is not None:
+            log_policy.log_merge_send(
+                node_name=node_name,
+                target=target_session,
+                label="相册合并",
+                chunk_idx=1,
+                total_chunks=1,
+                node_count=len(all_nodes_data),
+                batch_count=1,
+            )
+        else:
+            logger.info(
+                f"[QQSender] {node_name} -> {target_session}: 相册合并 ({len(all_nodes_data)} 节点)"
+            )
         return
 
     if batch_data.get("contains_audio"):
@@ -429,9 +453,15 @@ async def send_processed_batch(
                 deferred_common_nodes.append(common_components)
         for deferred_components in deferred_common_nodes:
             await send_common_components(deferred_components)
-        logger.info(
-            f"[QQSender] {node_name} -> {target_session}: 单条消息 (音频已拆分补文件)"
-        )
+        if log_policy is not None:
+            log_policy.log_audio_split(
+                node_name=node_name,
+                target=target_session,
+            )
+        else:
+            logger.info(
+                f"[QQSender] {node_name} -> {target_session}: 单条消息 (音频已拆分补文件)"
+            )
         return
 
     special_types = (Record, File, Video)
@@ -451,16 +481,30 @@ async def send_processed_batch(
                         source_path = getattr(
                             c, "_tgf_source_path", getattr(c, "path", None)
                         )
-                        logger.info(
-                            f"[QQSender] Video special media ready: "
-                            f"target={target_session}, "
-                            f"batch_index={batch_data.get('batch_index')}, "
-                            f"node_types={component_types}, "
-                            f"source_path={source_path!r}, "
-                            f"payload_file={getattr(c, 'file', None)!r}, "
-                            f"file_size={safe_file_size(source_path)}, "
-                            f"has_plain_text_same_batch={any(not isinstance(x, special_types) for x in node_components)}"
-                        )
+                        if log_policy is not None:
+                            log_policy.log_special_media_ready(
+                                target=target_session,
+                                batch_index=batch_data.get("batch_index"),
+                                node_types=component_types,
+                                source_path=source_path,
+                                payload_file=getattr(c, "file", None),
+                                file_size=safe_file_size(source_path),
+                                has_plain_text_same_batch=any(
+                                    not isinstance(x, special_types)
+                                    for x in node_components
+                                ),
+                            )
+                        else:
+                            logger.info(
+                                f"[QQSender] Video special media ready: "
+                                f"target={target_session}, "
+                                f"batch_index={batch_data.get('batch_index')}, "
+                                f"node_types={component_types}, "
+                                f"source_path={source_path!r}, "
+                                f"payload_file={getattr(c, 'file', None)!r}, "
+                                f"file_size={safe_file_size(source_path)}, "
+                                f"has_plain_text_same_batch={any(not isinstance(x, special_types) for x in node_components)}"
+                            )
                     chain = MessageChain([c])
                     try:
                         await send_message_fn(
@@ -551,9 +595,23 @@ async def send_processed_batch(
         )
 
     if batch_has_special:
-        logger.info(
-            f"[QQSender] {node_name} -> {target_session}: 单条消息 (已拆分特殊媒体)"
-        )
+        if log_policy is not None:
+            log_policy.log_target_summary(
+                node_name=node_name,
+                target=target_session,
+                label="单条消息 (已拆分特殊媒体)",
+            )
+        else:
+            logger.info(
+                f"[QQSender] {node_name} -> {target_session}: 单条消息 (已拆分特殊媒体)"
+            )
         return
 
-    logger.info(f"[QQSender] {node_name} -> {target_session}: 单条普通消息")
+    if log_policy is not None:
+        log_policy.log_target_summary(
+            node_name=node_name,
+            target=target_session,
+            label="单条普通消息",
+        )
+    else:
+        logger.info(f"[QQSender] {node_name} -> {target_session}: 单条普通消息")

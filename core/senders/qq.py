@@ -68,6 +68,7 @@ from .qq_targets import (
     session_platform_ids,
     split_qq_targets,
 )
+from .qq_log_policy import QQLogPolicy
 from .qq_types import SendKind
 
 _ = Plain, ProcessedBatch, File, Image, Record, Video
@@ -109,6 +110,8 @@ class QQSender:
         self.bot = None  # 动态捕获的 bot 实例
         self.node_name = None  # 合并转发消息时显示的 bot 昵称
         self._target_circuit: dict[str, dict[str, float | int]] = {}
+        self._debug_override: dict[str, bool] = {}
+        self._log_policy = QQLogPolicy(self._debug_enabled)
 
     async def _ensure_node_name(self, bot, cache_fallback: bool = False):
         """获取 bot 昵称"""
@@ -135,6 +138,15 @@ class QQSender:
             self._group_locks[group_id] = asyncio.Lock()
         return self._group_locks[group_id]
 
+    def _debug_enabled(self) -> bool:
+        """检查当前是否启用 debug 日志模式。
+
+        优先使用 per-target 覆盖，否则回退到全局配置。
+        """
+        if self._debug_override:
+            return any(self._debug_override.values())
+        return bool(self.config.get("debug_enabled_default", False))
+
     def _map_path(self, fpath: str) -> str:
         """映射文件路径（用于跨 Docker 容器文件访问）"""
         return map_path_with_config(
@@ -148,6 +160,7 @@ class QQSender:
             fpath,
             map_path=self._map_path,
             audio_mode=audio_mode,
+            log_policy=self._log_policy,
         )
 
     async def _send_with_timeout(
@@ -182,10 +195,13 @@ class QQSender:
             )
             raise
         duration = time.monotonic() - started_at
-        logger.info(
-            f"[QQSender] send kind={send_kind} target={unified_msg_origin} "
-            f"component_types={component_types} payload_file={payload_file!r} "
-            f"source_path={source_path!r} duration={duration:.3f}s"
+        self._log_policy.log_send_success(
+            send_kind=send_kind,
+            target=unified_msg_origin,
+            component_types=component_types,
+            payload_file=payload_file,
+            source_path=source_path,
+            duration=duration,
         )
 
     async def _handle_file_send_failure(
@@ -262,6 +278,7 @@ class QQSender:
             should_merge=self._should_merge_batch_nodes,
             allow_forward_nodes=allow_forward_nodes,
             handle_file_send_failure=self._handle_file_send_failure,
+            log_policy=self._log_policy,
         )
 
     async def initialize_runtime(self):
@@ -577,6 +594,7 @@ class QQSender:
             fail_fast_limit=fail_fast_limit,
             target_circuit_fail_threshold=target_circuit_fail_threshold,
             target_circuit_cooldown_sec=target_circuit_cooldown_sec,
+            log_policy=self._log_policy,
         )
         target_successes = dispatch_result.target_successes
         target_failures = dispatch_result.target_failures

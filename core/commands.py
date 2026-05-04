@@ -1441,6 +1441,66 @@ class PluginCommands:
         )
         yield event.plain_result(msg)
 
+    async def debug(self, event: AstrMessageEvent, action: str | None = None):
+        """管理 QQ 发送诊断日志模式。
+
+        Args:
+            event: 消息事件。
+            action: 子命令 (on / off / status)，为空时显示用法。
+        """
+        qq_sender = getattr(self.forwarder, "qq_sender", None)
+        if qq_sender is None:
+            yield event.plain_result("QQ 发送器未初始化。")
+            return
+
+        cmd = (action or "").strip().lower()
+
+        if cmd == "on":
+            qq_sender._debug_override["__global"] = True
+            yield event.plain_result(
+                "已开启 QQ 发送诊断日志（运行时覆盖，重启后失效）。\n"
+                "配置页默认值可通过 /tg set root debug_enabled_default true 修改。"
+            )
+            return
+
+        if cmd == "off":
+            had_override = "__global" in qq_sender._debug_override
+            qq_sender._debug_override.pop("__global", None)
+            if had_override:
+                config_default = bool(self.config.get("debug_enabled_default", False))
+                if config_default:
+                    yield event.plain_result(
+                        "已清除运行时覆盖，当前配置页默认为开启。"
+                    )
+                else:
+                    yield event.plain_result(
+                        "已关闭 QQ 发送诊断日志（运行时覆盖已清除，回退到配置页默认：关闭）。"
+                    )
+            else:
+                yield event.plain_result("当前没有运行时覆盖，无需清除。")
+            return
+
+        if cmd == "status":
+            has_override = "__global" in qq_sender._debug_override
+            config_default = bool(self.config.get("debug_enabled_default", False))
+            effective = qq_sender._debug_enabled()
+            if has_override:
+                source = "runtime override"
+            else:
+                source = f"config default ({'开启' if config_default else '关闭'})"
+            state = "开启" if effective else "关闭"
+            yield event.plain_result(
+                f"QQ 发送诊断日志：{state}（来源：{source}）"
+            )
+            return
+
+        yield event.plain_result(
+            "用法：/tg debug <on|off|status>\n"
+            "  on      开启诊断日志（运行时覆盖，重启后失效）\n"
+            "  off     关闭诊断日志（清除运行时覆盖，回退到配置页默认）\n"
+            "  status  查看当前生效状态和来源"
+        )
+
     async def show_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
         help_text = (
@@ -1455,6 +1515,7 @@ class PluginCommands:
             "/tg clearqueue [频道|all]  清空队列\n"
             "/tg get [global|频道] 查看配置\n"
             "/tg set <目标> <字段> <值>  修改配置\n"
+            "/tg debug [on|off|status]  QQ 诊断日志开关\n"
             "/tg login start [手机号]\n"
             "/tg login code <验证码>（输入每位加 1 后的验证码）\n"
             "/tg login password <两步验证密码>\n"
