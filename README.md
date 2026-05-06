@@ -10,14 +10,6 @@
 
 </div>
 
-### APK Fallback
-
-When QQ rejects `.apk/.xapk/.apkm/.apks` uploads with `rich media transfer failed`,
-you can now configure:
-
-* `apk_fallback_mode`: `关闭` / `直链` / `压缩包` / `直链优先，失败转压缩包`
-* `apk_direct_link_base_url`: the public base URL used by direct-link fallback, for example `https://files.example.com/downloads/`
-
 ## 📖 简介
 
 一款为 [AstrBot](https://astrbot.app) 设计的功能强大的 Telegram 消息转发插件。它支持自动监控指定的公开频道，并将其中的文字、图片、音频及文件实时同步至您的 QQ 群或另一个 Telegram 频道。
@@ -32,6 +24,7 @@ you can now configure:
 * **📦 全媒体类型支持**
   * **图文消息**: 自动识别并保持格式同步。
   * **音频/文件**: 支持常见媒体与文件类型搬运。
+  * **APK 失败降级**: QQ 拒收 `.apk/.xapk/.apkm/.apks` 时，可自动改走直链或压缩包发送。
 * **🛠️ 高级控制逻辑**
   * **灵活过滤**: 内置关键词黑名单与正则表达式过滤引擎。
   * **冷启动支持**: 可指定历史日期开始搬运。在频道设置中指定 `start_time` (格式: YYYY-MM-DD) 即可。
@@ -203,6 +196,8 @@ https://api.ipify.org
 * **use_channel_title**: 是否在消息头部显示频道名称。
 * **enable_deduplication**: 是否启用转发查重。开启后，如果频道 A 转发了频道 B 的消息，且频道 B 也在监控列表中，则频道 A 的这条转发消息将被自动跳过。
 * **exclude_text_on_media**: 开启后，包含媒体的消息将不再发送文本内容（包含 From 头部）。
+* **apk_fallback_mode**: 当 QQ 发送 `.apk/.xapk/.apkm/.apks` 返回 `rich media transfer failed` 时的降级策略：`关闭` / `直链` / `压缩包` / `直链优先，失败转压缩包`
+* **apk_direct_link_base_url**: 直链降级使用的公网下载基地址，例如 `https://files.example.com/downloads/`。请确保外部可访问，且生成的文件 URL 可被 QQ 客户端打开。
 * **filter_spoiler_messages**: 过滤 Telegram 遮罩/剧透消息（文本剧透实体与媒体剧透标记）。
 * **strip_markdown_links**: 开启后，[文本](链接) 只保留「文本」，链接部分被完全丢弃
 * **batch_size_limit**: 每次转发执行时，单次处理的消息批次上限。
