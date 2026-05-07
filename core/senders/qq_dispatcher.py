@@ -144,8 +144,9 @@ async def dispatch_processed_batches_to_targets(
                         )
                         for batch_data in chunk_batches
                     )
+                    send_each_batch = len(chunk_batches) == 1 or chunk_has_special_media
                     try:
-                        if len(chunk_batches) == 1 or chunk_has_special_media:
+                        if send_each_batch:
                             for batch_data in chunk_batches:
                                 await send_processed_batch_fn(
                                     batch_data=batch_data,
@@ -155,6 +156,10 @@ async def dispatch_processed_batches_to_targets(
                                     target_session=target_session,
                                     allow_forward_nodes=False,
                                 )
+                                target_successes[batch_data["batch_index"]].add(
+                                    target_session
+                                )
+                            record_target_success(target_session)
                         elif len(chunk_nodes) > 1:
                             nodes_list = [
                                 Node(uin=self_id, name=node_name, content=nc)
@@ -176,9 +181,10 @@ async def dispatch_processed_batches_to_targets(
                                 target_session=target_session,
                                 allow_forward_nodes=False,
                             )
-                        for batch_index in chunk_batch_indexes:
-                            target_successes[batch_index].add(target_session)
-                        record_target_success(target_session)
+                        if not send_each_batch:
+                            for batch_index in chunk_batch_indexes:
+                                target_successes[batch_index].add(target_session)
+                            record_target_success(target_session)
                         consecutive_failures = 0
                         if log_policy is not None:
                             log_policy.log_merge_send(
