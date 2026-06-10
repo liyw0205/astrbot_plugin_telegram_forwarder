@@ -704,6 +704,8 @@ class WebAdminServer:
             self.token = web_config["token"]
 
         self.plugin.config.save_config()
+        if hasattr(self.plugin, "forwarder"):
+            self.plugin.forwarder.reload_runtime_config()
 
         new_client_keys = (
             self.plugin.config.get("api_id"),

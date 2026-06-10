@@ -30,6 +30,8 @@ const FORWARD_GROUPS = [
     label: "QQ 发送",
     fields: [
       { key: "qq_merge_threshold", label: "QQ 大合并阈值", type: "int", defaultValue: 0 },
+      { key: "album_settle_seconds", label: "相册等待完整", type: "int", suffix: "秒", defaultValue: 8 },
+      { key: "album_lookahead_limit", label: "相册补拉上限", type: "int", defaultValue: 20 },
       {
         key: "qq_big_merge_mode",
         label: "QQ 大合并范围",

@@ -91,6 +91,12 @@ class Forwarder:
         # 缓存频道标题 (Key: ChannelUsername, Value: Title)
         self._channel_titles_cache = {}
 
+    def reload_runtime_config(self) -> None:
+        """刷新依赖配置快照的运行时组件。"""
+        self.message_filter = MessageFilter(self.config)
+        self.message_merger = MessageMerger(self.config)
+        logger.info("[Forwarder] 运行时配置组件已刷新。")
+
     def _get_channel_lock(self, channel_name: str) -> asyncio.Lock:
         if channel_name not in self._channel_locks:
             self._channel_locks[channel_name] = asyncio.Lock()
@@ -223,6 +229,102 @@ class Forwarder:
             )
 
         return has_text_spoiler or has_media_spoiler
+
+    @staticmethod
+    def _positive_int(value, fallback: int, minimum: int = 1) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = fallback
+        return max(minimum, parsed)
+
+    @staticmethod
+    def _message_age_seconds(msg: Message) -> float:
+        msg_date = getattr(msg, "date", None)
+        if not isinstance(msg_date, datetime):
+            return float("inf")
+        if msg_date.tzinfo is None:
+            msg_date = msg_date.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc).timestamp() - msg_date.timestamp()
+
+    async def _prepare_album_boundaries(
+        self, channel_name: str, messages: list[Message], msg_limit: int
+    ) -> list[Message]:
+        """避免把刚到达或被上限截断的 Telegram 相册半组入队。"""
+        if not messages:
+            return messages
+
+        grouped_tail = getattr(messages[-1], "grouped_id", None)
+        if not grouped_tail:
+            return messages
+
+        forward_cfg = self.config.get("forward_config", {})
+        settle_seconds = self._positive_int(
+            forward_cfg.get("album_settle_seconds", 8), 8, minimum=0
+        )
+        lookahead_limit = self._positive_int(
+            forward_cfg.get("album_lookahead_limit", 20), 20
+        )
+        fetch_limit = self._positive_int(msg_limit, 20)
+
+        if self._message_age_seconds(messages[-1]) < settle_seconds:
+            tail_start_index = len(messages) - 1
+            while (
+                tail_start_index > 0
+                and getattr(messages[tail_start_index - 1], "grouped_id", None)
+                == grouped_tail
+            ):
+                tail_start_index -= 1
+            stable_messages = messages[:tail_start_index]
+            logger.info(
+                f"[Merge] 频道 {channel_name} 最新相册 {grouped_tail} 仍在到达窗口内，暂缓 {len(messages) - len(stable_messages)} 条。"
+            )
+            return stable_messages
+
+        if len(messages) < fetch_limit:
+            return messages
+
+        known_ids = {msg.id for msg in messages}
+        max_id = max(known_ids)
+        extra_messages = []
+        try:
+            async for message in self.client.iter_messages(
+                entity=to_telethon_entity(channel_name),
+                reverse=True,
+                min_id=max_id,
+                limit=lookahead_limit,
+            ):
+                if not isinstance(message, Message) or not message.id:
+                    continue
+                if getattr(message, "grouped_id", None) != grouped_tail:
+                    break
+                if message.id in known_ids:
+                    continue
+                extra_messages.append(message)
+                known_ids.add(message.id)
+        except Exception as e:
+            logger.debug(f"[Merge] 频道 {channel_name} 相册边界补拉失败: {e}")
+
+        if extra_messages:
+            logger.info(
+                f"[Merge] 频道 {channel_name} 相册 {grouped_tail} 因批次上限被截断，已补拉 {len(extra_messages)} 条。"
+            )
+            messages = [*messages, *extra_messages]
+            if len(extra_messages) >= lookahead_limit:
+                tail_start_index = len(messages) - 1
+                while (
+                    tail_start_index > 0
+                    and getattr(messages[tail_start_index - 1], "grouped_id", None)
+                    == grouped_tail
+                ):
+                    tail_start_index -= 1
+                stable_messages = messages[:tail_start_index]
+                logger.info(
+                    f"[Merge] 频道 {channel_name} 相册 {grouped_tail} 补拉达到上限 {lookahead_limit}，暂缓 {len(messages) - len(stable_messages)} 条。"
+                )
+                return stable_messages
+
+        return messages
 
     def _is_monitor_matched(self, msg: Message, effective_cfg: dict) -> bool:
         monitor_keywords = effective_cfg.get("monitor_keywords", [])
@@ -514,6 +616,9 @@ class Forwarder:
                     logger.debug(f"[Capture] 正在拉取: {channel_name}")
                     messages = await self._fetch_channel_messages(
                         channel_name, start_date, msg_limit
+                    )
+                    messages = await self._prepare_album_boundaries(
+                        channel_name, messages, msg_limit
                     )
                     monitor_hit_count = 0
                     monitor_hit_targets = []

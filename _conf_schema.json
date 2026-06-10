@@ -351,6 +351,18 @@
                 "default": 0,
                 "hint": "限制每轮 send_pending_messages 最多发送多少个 QQ 逻辑单元（单条=1，相册=1）；0 表示不额外限制"
             },
+            "album_settle_seconds": {
+                "description": "相册等待完整秒数",
+                "type": "int",
+                "default": 8,
+                "hint": "抓到最新 Telegram 相册尾部时等待几秒再入队，避免图集还没到齐就被半组发送。0 表示不等待"
+            },
+            "album_lookahead_limit": {
+                "description": "相册边界补拉上限",
+                "type": "int",
+                "default": 20,
+                "hint": "当单次抓取上限刚好截断相册时，最多向后补拉多少条同组消息"
+            },
             "qq_target_fail_fast_consecutive_failures": {
                 "description": "QQ 目标连续失败熔断阈值",
                 "type": "int",
