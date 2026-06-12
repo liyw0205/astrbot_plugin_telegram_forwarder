@@ -135,16 +135,18 @@ async def dispatch_processed_batches_to_targets(
                     chunk_batch_indexes = [bd["batch_index"] for bd in chunk_batches]
                     for bd in chunk_batches:
                         chunk_nodes.extend(bd["nodes_data"])
-                    chunk_has_special_media = any(
+                    # 视频可以先尝试进入大合并；如果 QQ 端拒收，外层异常处理会降级为逐批发送。
+                    # 音频和普通文件仍然保守拆发，避免整块合并失败。
+                    chunk_blocks_big_merge = any(
                         batch_data.get("contains_audio")
                         or any(
-                            isinstance(component, (Record, File, Video))
+                            isinstance(component, (Record, File))
                             for node_components in batch_data["nodes_data"]
                             for component in node_components
                         )
                         for batch_data in chunk_batches
                     )
-                    send_each_batch = len(chunk_batches) == 1 or chunk_has_special_media
+                    send_each_batch = chunk_blocks_big_merge or len(chunk_nodes) <= 1
                     try:
                         if send_each_batch:
                             for batch_data in chunk_batches:
@@ -186,22 +188,23 @@ async def dispatch_processed_batches_to_targets(
                                 target_successes[batch_index].add(target_session)
                             record_target_success(target_session)
                         consecutive_failures = 0
-                        if log_policy is not None:
-                            log_policy.log_merge_send(
-                                node_name=node_name,
-                                target=target_session,
-                                label=f"{'混合' if is_mixed_big_merge else ''}大合并转发",
-                                chunk_idx=chunk_idx,
-                                total_chunks=total_chunks,
-                                node_count=len(chunk_nodes),
-                                batch_count=len(chunk_batches),
-                            )
-                        else:
-                            logger.info(
-                                f"[QQSender] {node_name} -> {target_session}: "
-                                f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
-                                f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
-                            )
+                        if not send_each_batch:
+                            if log_policy is not None:
+                                log_policy.log_merge_send(
+                                    node_name=node_name,
+                                    target=target_session,
+                                    label=f"{'混合' if is_mixed_big_merge else ''}大合并转发",
+                                    chunk_idx=chunk_idx,
+                                    total_chunks=total_chunks,
+                                    node_count=len(chunk_nodes),
+                                    batch_count=len(chunk_batches),
+                                )
+                            else:
+                                logger.info(
+                                    f"[QQSender] {node_name} -> {target_session}: "
+                                    f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
+                                    f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
+                                )
                         if chunk_idx < total_chunks:
                             await asyncio.sleep(chunk_delay)
                     except Exception as e:
