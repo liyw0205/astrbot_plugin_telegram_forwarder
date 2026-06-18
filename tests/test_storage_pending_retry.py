@@ -101,6 +101,7 @@ def test_add_batch_initializes_retry_fields():
         assert item["last_error_code"] == ""
         assert item["last_attempt_at"] == 0
         assert item["last_target_session"] == ""
+        assert item["completed_qq_targets"] == []
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -140,6 +141,7 @@ def test_get_all_pending_normalizes_legacy_items():
         assert item["last_error_code"] == ""
         assert item["last_attempt_at"] == 0
         assert item["last_target_session"] == ""
+        assert item["completed_qq_targets"] == []
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -186,6 +188,7 @@ def test_mark_pending_retry_updates_targeted_items_only():
         assert items[11]["last_error_code"] == ""
         assert items[11]["last_attempt_at"] == 1000.0
         assert items[11]["last_target_session"] == "test:GroupMessage:1"
+        assert items[11]["completed_qq_targets"] == []
         assert items[12]["retry_count"] == 0
         assert items[12]["next_retry_at"] == 0
     finally:
@@ -212,6 +215,7 @@ def test_clear_pending_retry_resets_targeted_items_only():
                     "last_error_code": "",
                     "last_attempt_at": 1000.0,
                     "last_target_session": "test:GroupMessage:2",
+                    "completed_qq_targets": ["test:GroupMessage:1"],
                 },
                 {
                     "id": 22,
@@ -238,6 +242,7 @@ def test_clear_pending_retry_resets_targeted_items_only():
         assert items[21]["last_error_code"] == ""
         assert items[21]["last_attempt_at"] == 0
         assert items[21]["last_target_session"] == ""
+        assert items[21]["completed_qq_targets"] == []
         assert items[22]["retry_count"] == 1
         assert items[22]["next_retry_at"] == 1030.0
     finally:
@@ -276,5 +281,53 @@ def test_mark_pending_tg_forwarded_persists_target_per_item():
         items = {item["id"]: item for item in reloaded.get_all_pending()}
         assert items[31]["last_tg_target"] == "tg-target"
         assert items[32]["last_tg_target"] == ""
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_mark_pending_qq_targets_completed_persists_deduped_targets():
+    storage_module = load_storage_module()
+    tmp_dir = make_test_dir()
+    try:
+        data_path = tmp_dir / "data.json"
+        storage = storage_module.Storage(str(data_path))
+        storage.add_batch_to_pending_queue(
+            "demo",
+            [
+                {
+                    "id": 41,
+                    "time": 100.0,
+                    "grouped_id": None,
+                    "is_cold_start": False,
+                    "is_monitored": False,
+                },
+                {
+                    "id": 42,
+                    "time": 101.0,
+                    "grouped_id": None,
+                    "is_cold_start": False,
+                    "is_monitored": False,
+                },
+            ],
+        )
+
+        storage.mark_pending_qq_targets_completed(
+            "demo",
+            [41],
+            ["test:GroupMessage:1", "test:GroupMessage:1"],
+        )
+        storage.mark_pending_qq_targets_completed(
+            "demo",
+            [41],
+            ["test:GroupMessage:2"],
+        )
+
+        reloaded = storage_module.Storage(str(data_path))
+        items = {item["id"]: item for item in reloaded.get_all_pending()}
+        assert items[41]["completed_qq_targets"] == [
+            "test:GroupMessage:1",
+            "test:GroupMessage:2",
+        ]
+        assert items[42]["completed_qq_targets"] == []
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

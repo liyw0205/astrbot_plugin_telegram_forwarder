@@ -639,6 +639,24 @@ class WebAdminServer:
             normalized.append(cfg)
         return normalized
 
+    def _normalize_merge_rules(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            cfg = dict(item)
+            cfg["__template_key"] = cfg.get("__template_key") or "default"
+            cfg["name"] = str(cfg.get("name", "") or "").strip()
+            cfg["channel"] = str(cfg.get("channel", "")).lstrip("@#").strip()
+            cfg["rule_class"] = str(cfg.get("rule_class", "") or "").strip()
+            params = cfg.get("params")
+            cfg["params"] = dict(params) if isinstance(params, dict) else {}
+            normalized.append(cfg)
+        return normalized
+
     async def save_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         incoming = payload.get("config") if isinstance(payload.get("config"), dict) else payload
         if not isinstance(incoming, dict):
@@ -695,8 +713,10 @@ class WebAdminServer:
                 incoming["source_channels"]
             )
 
-        if "merge_rules" in incoming and isinstance(incoming["merge_rules"], list):
-            self.plugin.config["merge_rules"] = incoming["merge_rules"]
+        if "merge_rules" in incoming:
+            self.plugin.config["merge_rules"] = self._normalize_merge_rules(
+                incoming["merge_rules"]
+            )
 
         if "web_config" in incoming:
             web_config = self.normalize_web_config(incoming["web_config"])

@@ -101,6 +101,9 @@ class QQSendSummary:
     failed_batch_indexes: tuple[int, ...] = ()
     deferred_batch_indexes: tuple[int, ...] = ()
     error_types: dict[int, str] = field(default_factory=dict)
+    target_sessions: tuple[str, ...] = ()
+    target_sessions_by_batch: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    completed_target_sessions: dict[int, tuple[str, ...]] = field(default_factory=dict)
 
 
 class QQSender:
@@ -555,6 +558,7 @@ class QQSender:
         display_name: str | None = None,
         effective_cfg: dict[str, object] | None = None,
         involved_channels: list[str] | None = None,
+        completed_target_sessions_by_batch: dict[int, Iterable[str]] | None = None,
     ):
         """将一个或多个 Telegram 消息批次转发到 QQ 目标。
 
@@ -625,6 +629,31 @@ class QQSender:
 
         is_mixed_big_merge = bool(involved_channels and len(involved_channels) > 1)
 
+        context_target_set = set(context_target_sessions)
+        target_successes = {
+            batch_index: {
+                str(target_session)
+                for target_session in (
+                    completed_target_sessions_by_batch or {}
+                ).get(batch_index, ())
+                if str(target_session) in context_target_set
+            }
+            for batch_index in range(len(real_batches))
+        }
+        deferred_batch_indexes: set[int] = set()
+
+        if all(
+            len(success_sessions) == len(context_target_sessions)
+            for success_sessions in target_successes.values()
+        ):
+            logger.debug("[QQSender] 本轮批次的 QQ 目标均已完成，跳过重复发送")
+            return self._build_send_summary(
+                context_target_sessions=context_target_sessions,
+                target_successes=target_successes,
+                target_failures={},
+                deferred_batch_indexes=deferred_batch_indexes,
+            )
+
         build_result = await build_processed_batches(
             sender=self,
             real_batches=real_batches,
@@ -636,10 +665,6 @@ class QQSender:
         )
         processed_batches = build_result.processed_batches
         target_failures = build_result.target_failures
-        target_successes = {
-            batch_index: set() for batch_index in range(len(real_batches))
-        }
-        deferred_batch_indexes: set[int] = set()
 
         use_big_merge = (qq_merge_threshold > 1) and (
             len(processed_batches) >= qq_merge_threshold

@@ -1909,6 +1909,15 @@ class TestSendHelperExtraction:
         assert summary.failed_batch_indexes == (1,)
         assert summary.deferred_batch_indexes == (2,)
         assert summary.error_types == {1: "timeout", 2: "circuit_open"}
+        assert summary.target_sessions == (
+            "test:GroupMessage:1",
+            "test:GroupMessage:2",
+        )
+        assert summary.completed_target_sessions == {
+            0: ("test:GroupMessage:1", "test:GroupMessage:2"),
+            1: ("test:GroupMessage:1",),
+            2: (),
+        }
 
     def test_module_export_collect_processed_batch_local_files(self, qq_module):
         processed_batches = [
@@ -2342,6 +2351,48 @@ class TestTargetLevelFailFast:
         assert calls_by_target["test:GroupMessage:ok"] == 3
         assert summary.acked_batch_indexes == ()
         assert summary.failed_batch_indexes == (0, 1, 2)
+
+    @pytest.mark.asyncio
+    async def test_completed_target_is_not_sent_again(self, sender):
+        sender._bootstrap_qq_runtime = AsyncMock()
+        sender._ensure_node_name = AsyncMock(return_value="bot")
+        sender.downloader.download_media = AsyncMock(return_value=[])
+        sender.downloader.client = MagicMock()
+
+        bot = MagicMock()
+        bot.get_login_info = AsyncMock(return_value={"user_id": 1})
+        sender.bot = bot
+
+        calls_by_target = {"test:GroupMessage:done": 0, "test:GroupMessage:todo": 0}
+
+        async def fake_send_processed_batch(*, target_session, **kwargs):
+            calls_by_target[target_session] += 1
+
+        sender._send_processed_batch = AsyncMock(side_effect=fake_send_processed_batch)
+
+        summary = await sender.send(
+            batches=[[self._make_msg(1, "m1")]],
+            src_channel="demo",
+            display_name="demo",
+            effective_cfg={
+                "effective_target_qq_sessions": [
+                    "test:GroupMessage:done",
+                    "test:GroupMessage:todo",
+                ]
+            },
+            completed_target_sessions_by_batch={
+                0: ("test:GroupMessage:done",),
+            },
+        )
+
+        assert calls_by_target == {
+            "test:GroupMessage:done": 0,
+            "test:GroupMessage:todo": 1,
+        }
+        assert summary.acked_batch_indexes == (0,)
+        assert summary.completed_target_sessions == {
+            0: ("test:GroupMessage:done", "test:GroupMessage:todo")
+        }
 
     @pytest.mark.asyncio
     async def test_big_merge_fail_fast_uses_configured_threshold(self, sender):

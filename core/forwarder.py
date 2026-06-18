@@ -737,6 +737,17 @@ class Forwarder:
             return current
         if current is None:
             return incoming
+
+        def merge_target_map(
+            first: dict[int, tuple[str, ...]], second: dict[int, tuple[str, ...]]
+        ) -> dict[int, tuple[str, ...]]:
+            merged: dict[int, tuple[str, ...]] = dict(first)
+            for index, targets in second.items():
+                merged[index] = tuple(
+                    dict.fromkeys((*merged.get(index, ()), *targets))
+                )
+            return merged
+
         return QQSendSummary(
             acked_batch_indexes=tuple(
                 dict.fromkeys(
@@ -754,6 +765,22 @@ class Forwarder:
                 )
             ),
             error_types={**current.error_types, **incoming.error_types},
+            target_sessions=tuple(
+                dict.fromkeys(
+                    (
+                        *getattr(current, "target_sessions", ()),
+                        *getattr(incoming, "target_sessions", ()),
+                    )
+                )
+            ),
+            target_sessions_by_batch=merge_target_map(
+                getattr(current, "target_sessions_by_batch", {}),
+                getattr(incoming, "target_sessions_by_batch", {}),
+            ),
+            completed_target_sessions=merge_target_map(
+                getattr(current, "completed_target_sessions", {}),
+                getattr(incoming, "completed_target_sessions", {}),
+            ),
         )
 
     @staticmethod
@@ -771,7 +798,7 @@ class Forwarder:
     ) -> None:
         strict_ack = self.config.get("forward_config", {}).get(
             "send_result_strict_ack", False
-        )
+        ) or self._has_multi_qq_targets(batch_meta, send_summary)
         removable_by_channel: dict[str, list[int]] = {}
 
         if strict_ack:
@@ -792,6 +819,64 @@ class Forwarder:
 
         for channel, ids in removable_by_channel.items():
             self.storage.remove_ids_from_pending(channel, ids)
+
+    @staticmethod
+    def _normalize_target_list(targets: object) -> list[str]:
+        if not isinstance(targets, list):
+            return []
+        return [str(target) for target in targets if str(target)]
+
+    @classmethod
+    def _completed_qq_targets_for_items(cls, items: list[dict]) -> list[str]:
+        if not items:
+            return []
+        completed_sets = []
+        for item in items:
+            completed_sets.append(
+                set(
+                    cls._normalize_target_list(
+                        item.get("completed_qq_targets", [])
+                    )
+                )
+            )
+        if not completed_sets:
+            return []
+        return sorted(set.intersection(*completed_sets))
+
+    def _mark_completed_qq_targets(
+        self, batch_meta: list[dict], send_summary: QQSendSummary
+    ) -> None:
+        if not hasattr(self.storage, "mark_pending_qq_targets_completed"):
+            return
+        completed_by_batch = getattr(send_summary, "completed_target_sessions", {})
+        for index, completed_targets in completed_by_batch.items():
+            if index < 0 or index >= len(batch_meta) or not completed_targets:
+                continue
+            meta = batch_meta[index]
+            self.storage.mark_pending_qq_targets_completed(
+                meta["channel"], meta["ids"], list(completed_targets)
+            )
+
+    @staticmethod
+    def _has_multi_qq_targets(
+        batch_meta: list[dict], send_summary: QQSendSummary
+    ) -> bool:
+        target_sessions = getattr(send_summary, "target_sessions", ())
+        if len(target_sessions) > 1:
+            return True
+        target_sessions_by_batch = getattr(send_summary, "target_sessions_by_batch", {})
+        if any(len(targets) > 1 for targets in target_sessions_by_batch.values()):
+            return True
+        return any(len(meta.get("target_sessions", [])) > 1 for meta in batch_meta)
+
+    def _completed_qq_targets_for_batch(self, src_channel: str, msgs: list) -> list[str]:
+        msg_ids = {msg.id for msg in msgs}
+        pending_items = [
+            item
+            for item in self.storage.get_all_pending()
+            if item["channel"] == src_channel and item["id"] in msg_ids
+        ]
+        return self._completed_qq_targets_for_items(pending_items)
 
     async def send_pending_messages(
         self,
@@ -1283,6 +1368,7 @@ class Forwarder:
                         "ids": [msg.id for msg in msgs],
                         "qq_attempted": bool(target_sessions),
                         "target_session": target_sessions[0] if target_sessions else "",
+                        "target_sessions": list(target_sessions),
                     }
                 )
             queued_keys = {
@@ -1306,7 +1392,10 @@ class Forwarder:
                 )
             except Exception as e:
                 logger.error(f"[Send] 转发过程出现错误: {e}")
-                if global_cfg.get("send_result_strict_ack", False):
+                should_preserve_failed = global_cfg.get(
+                    "send_result_strict_ack", False
+                ) or any(len(meta.get("target_sessions", [])) > 1 for meta in batch_meta)
+                if should_preserve_failed:
                     send_summary = QQSendSummary(
                         acked_batch_indexes=(),
                         failed_batch_indexes=tuple(
@@ -1329,9 +1418,13 @@ class Forwarder:
                         error_types={},
                     )
             finally:
+                effective_strict_ack = False
                 if send_summary is not None:
                     attempted_at = datetime.now().timestamp()
-                    strict_ack = global_cfg.get("send_result_strict_ack", False)
+                    strict_ack = global_cfg.get(
+                        "send_result_strict_ack", False
+                    ) or self._has_multi_qq_targets(batch_meta, send_summary)
+                    effective_strict_ack = strict_ack
                     if strict_ack:
                         acked_indexes = {
                             index
@@ -1436,6 +1529,8 @@ class Forwarder:
                         meta = batch_meta[index]
                         self.storage.clear_pending_retry(meta["channel"], meta["ids"])
 
+                    self._mark_completed_qq_targets(batch_meta, send_summary)
+
                     acked_count = sum(
                         len(batch_meta[index]["ids"])
                         for index in stats_summary.acked_batch_indexes
@@ -1466,7 +1561,7 @@ class Forwarder:
                 if all_processed_meta:
                     processed_count = len(all_processed_meta)
                     skipped_count = processed_count - attempted_send_count
-                    if global_cfg.get("send_result_strict_ack", False):
+                    if effective_strict_ack:
                         msg = f"[Send] 处理完成: 尝试 {attempted_send_count}"
                     else:
                         msg = f"[Send] 处理完成: 成功 {attempted_send_count}"
@@ -1524,12 +1619,18 @@ class Forwarder:
             qq_send_groups = defaultdict(list)
             deferred_qq_indexes: list[int] = []
             qq_allowed_count = 0
+            completed_qq_targets_by_batch: dict[int, list[str]] = {}
 
             for batch_index, (msgs, src_channel) in enumerate(batches_with_channel):
                 effective_cfg = self._get_effective_config(src_channel)
                 target_sessions = effective_cfg["effective_target_qq_sessions"]
                 if not target_sessions:
                     continue
+                completed_targets = self._completed_qq_targets_for_batch(
+                    src_channel, msgs
+                )
+                if completed_targets:
+                    completed_qq_targets_by_batch[batch_index] = completed_targets
                 if qq_send_budget > 0 and qq_allowed_count >= qq_send_budget:
                     deferred_qq_indexes.append(batch_index)
                     continue
@@ -1569,6 +1670,7 @@ class Forwarder:
                                     display_name=display_name,
                                     effective_cfg=effective_cfg,
                                     is_mixed=False,
+                                    completed_qq_targets_by_batch=completed_qq_targets_by_batch,
                                 ),
                             )
                         )
@@ -1628,6 +1730,7 @@ class Forwarder:
                         effective_cfg=effective_cfg,
                         is_mixed=True,
                         involved_channels=involved_list,
+                        completed_qq_targets_by_batch=completed_qq_targets_by_batch,
                     )
                     qq_summary = self._merge_send_summaries(qq_summary, mixed_summary)
                 else:
@@ -1646,6 +1749,7 @@ class Forwarder:
                             display_name=display_name,
                             effective_cfg=effective_cfg,
                             is_mixed=False,
+                            completed_qq_targets_by_batch=completed_qq_targets_by_batch,
                         )
                         qq_summary = self._merge_send_summaries(
                             qq_summary, channel_summary
@@ -1669,6 +1773,7 @@ class Forwarder:
                             display_name=display_name,
                             effective_cfg=effective_cfg,
                             is_mixed=False,
+                            completed_qq_targets_by_batch=completed_qq_targets_by_batch,
                         )
                         qq_summary = self._merge_send_summaries(
                             qq_summary, channel_summary
@@ -1684,6 +1789,7 @@ class Forwarder:
                                 display_name=display_name,
                                 effective_cfg=effective_cfg,
                                 is_mixed=False,
+                                completed_qq_targets_by_batch=completed_qq_targets_by_batch,
                             )
                             qq_summary = self._merge_send_summaries(
                                 qq_summary, channel_summary
@@ -1696,6 +1802,7 @@ class Forwarder:
                                 display_name=display_name,
                                 effective_cfg=effective_cfg,
                                 is_mixed=False,
+                                completed_qq_targets_by_batch=completed_qq_targets_by_batch,
                             )
                             qq_summary = self._merge_send_summaries(
                                 qq_summary, channel_summary
@@ -1752,15 +1859,29 @@ class Forwarder:
         effective_cfg: dict,
         is_mixed: bool = False,
         involved_channels: list[str] | None = None,
+        completed_qq_targets_by_batch: dict[int, list[str]] | None = None,
     ):
         batch_message_counts = self._qq_batch_message_counts(batches)
         try:
+            local_completed_targets_by_batch: dict[int, tuple[str, ...]] = {}
+            if completed_qq_targets_by_batch:
+                for local_index, global_index in enumerate(batch_indexes):
+                    completed_targets = self._normalize_target_list(
+                        completed_qq_targets_by_batch.get(global_index, [])
+                    )
+                    if not completed_targets:
+                        continue
+                    local_completed_targets_by_batch[local_index] = tuple(
+                        completed_targets
+                    )
             qq_summary = await self.qq_sender.send(
                 batches=batches,
                 src_channel=src_channel,
                 display_name=display_name,
                 effective_cfg=effective_cfg,
                 involved_channels=involved_channels if is_mixed else None,
+                completed_target_sessions_by_batch=local_completed_targets_by_batch
+                or None,
             )
             if qq_summary is None:
                 return QQSendSummary()
@@ -1790,6 +1911,21 @@ class Forwarder:
                 error_types={
                     batch_indexes[index]: error_type
                     for index, error_type in qq_summary.error_types.items()
+                    if 0 <= index < len(batch_indexes)
+                },
+                target_sessions=getattr(qq_summary, "target_sessions", ()),
+                target_sessions_by_batch={
+                    batch_indexes[index]: targets
+                    for index, targets in getattr(
+                        qq_summary, "target_sessions_by_batch", {}
+                    ).items()
+                    if 0 <= index < len(batch_indexes)
+                },
+                completed_target_sessions={
+                    batch_indexes[index]: targets
+                    for index, targets in getattr(
+                        qq_summary, "completed_target_sessions", {}
+                    ).items()
                     if 0 <= index < len(batch_indexes)
                 },
             )

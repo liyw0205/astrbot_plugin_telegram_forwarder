@@ -41,6 +41,7 @@ class MessageMerger:
         merge_rules = {}
 
         for rule_config in rules_config:
+            rule_name = str(rule_config.get("name") or "").strip()
             channel = str(rule_config.get("channel") or "").strip().lstrip("@#")
             rule_class_name = rule_config.get("rule_class", "")
             params = rule_config.get("params", {})
@@ -58,7 +59,7 @@ class MessageMerger:
             merge_rules.setdefault(channel, []).append(rule)
 
             logger.info(
-                f"[Merge] 已加载频道 '{channel}' 的合并规则 '{rule_class_name}'"
+                f"[Merge] 已加载频道 '{channel}' 的合并规则 '{rule_name or rule_class_name}'"
             )
 
         return merge_rules

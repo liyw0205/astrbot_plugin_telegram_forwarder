@@ -454,6 +454,7 @@ function renderForwardConfig() {
 function defaultMergeRule() {
   return {
     __template_key: "default",
+    name: "",
     channel: "",
     rule_class: "KeywordNextNMerge",
     params: {
@@ -479,11 +480,16 @@ function normalizeMergeRule(rule = {}) {
 
 function mergeRuleKey(rule, index) {
   const normalized = normalizeMergeRule(rule);
-  return normalized.channel || normalized.rule_class ? `rule:${normalized.channel}:${normalized.rule_class}:${index}` : `idx:${index}`;
+  return normalized.name || normalized.channel || normalized.rule_class
+    ? `rule:${normalized.name}:${normalized.channel}:${normalized.rule_class}:${index}`
+    : `idx:${index}`;
 }
 
 function mergeRuleTitle(rule) {
   const normalized = normalizeMergeRule(rule);
+  if (normalized.name) {
+    return normalized.name;
+  }
   const classLabel = MERGE_RULE_CLASSES.find((item) => item.value === normalized.rule_class)?.label || normalized.rule_class || "未选择规则";
   return normalized.channel ? `@${normalized.channel} · ${classLabel}` : `新规则 · ${classLabel}`;
 }
@@ -512,6 +518,7 @@ function renderMergeRules() {
               <div class="channel-body">
                 <section class="channel-section active">
                   <div class="form-grid">
+                    <label class="field">规则名称<input data-merge-field="name" value="${escapeHtml(cfg.name)}" placeholder="例如：主频道预览图合并" /></label>
                     <label class="field">频道用户名<input data-merge-field="channel" value="${escapeHtml(cfg.channel)}" /></label>
                     <label class="field">规则类型
                       <select data-merge-field="rule_class">
@@ -868,6 +875,7 @@ function collectMergeRules({ keepEmpty = true } = {}) {
       };
       const collected = {
         __template_key: "default",
+        name: getText(field("name"), current.name),
         channel: getText(field("channel"), current.channel).replace(/^[@#]/, ""),
         rule_class: getText(field("rule_class"), current.rule_class),
         params: {

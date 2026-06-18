@@ -68,6 +68,7 @@ class FakeStorage:
                     "last_attempt_at": 0,
                     "last_target_session": "",
                     "last_tg_target": "",
+                    "completed_qq_targets": [],
                 }
             )
 
@@ -78,6 +79,25 @@ class FakeStorage:
             if item["channel"] != channel_name or item["id"] not in msg_ids:
                 continue
             item["last_tg_target"] = target_channel
+
+    def mark_pending_qq_targets_completed(
+        self, channel_name: str, msg_ids: list[int], target_sessions: list[str]
+    ) -> None:
+        for item in self.pending:
+            if item["channel"] != channel_name or item["id"] not in msg_ids:
+                continue
+            current = item.get("completed_qq_targets", [])
+            item["completed_qq_targets"] = list(
+                dict.fromkeys([*current, *target_sessions])
+            )
+
+    def clear_pending_qq_targets_completed(
+        self, channel_name: str, msg_ids: list[int]
+    ) -> None:
+        for item in self.pending:
+            if item["channel"] != channel_name or item["id"] not in msg_ids:
+                continue
+            item["completed_qq_targets"] = []
 
 
 class QQSendSummary(SimpleNamespace):
@@ -1591,6 +1611,97 @@ async def test_send_pending_does_not_repeat_tg_forward_after_qq_failure_retry():
     forwarder.tg_sender.send.assert_awaited_once()
     assert len(storage.retry_updates) == 2
     assert [item["id"] for item in storage.pending] == [821]
+
+
+@pytest.mark.asyncio
+async def test_send_pending_retries_only_unfinished_qq_targets():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 822,
+                "time": 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=False)
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": [
+            "test:GroupMessage:ok",
+            "test:GroupMessage:missing",
+        ],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.qq_sender = MagicMock()
+    forwarder.qq_sender.send = AsyncMock(
+        side_effect=[
+            QQSendSummary(
+                acked_batch_indexes=(),
+                failed_batch_indexes=(0,),
+                deferred_batch_indexes=(),
+                error_types={0: "send_failed"},
+                target_sessions=(
+                    "test:GroupMessage:ok",
+                    "test:GroupMessage:missing",
+                ),
+                target_sessions_by_batch={
+                    0: (
+                        "test:GroupMessage:ok",
+                        "test:GroupMessage:missing",
+                    )
+                },
+                completed_target_sessions={0: ("test:GroupMessage:ok",)},
+            ),
+            QQSendSummary(
+                acked_batch_indexes=(0,),
+                failed_batch_indexes=(),
+                deferred_batch_indexes=(),
+                error_types={},
+                target_sessions=(
+                    "test:GroupMessage:ok",
+                    "test:GroupMessage:missing",
+                ),
+                target_sessions_by_batch={
+                    0: (
+                        "test:GroupMessage:ok",
+                        "test:GroupMessage:missing",
+                    )
+                },
+                completed_target_sessions={
+                    0: (
+                        "test:GroupMessage:ok",
+                        "test:GroupMessage:missing",
+                    )
+                },
+            ),
+        ]
+    )
+    forwarder.tg_sender = MagicMock()
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    await forwarder.send_pending_messages()
+
+    assert storage.pending[0]["completed_qq_targets"] == ["test:GroupMessage:ok"]
+    assert [item["id"] for item in storage.pending] == [822]
+
+    storage.pending[0]["next_retry_at"] = 0
+    await forwarder.send_pending_messages()
+
+    assert forwarder.qq_sender.send.await_count == 2
+    second_call = forwarder.qq_sender.send.await_args_list[1]
+    assert second_call.kwargs["completed_target_sessions_by_batch"] == {
+        0: ("test:GroupMessage:ok",)
+    }
+    assert storage.pending == []
 
 
 @pytest.mark.asyncio

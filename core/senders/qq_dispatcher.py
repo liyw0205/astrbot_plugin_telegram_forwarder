@@ -104,10 +104,17 @@ async def dispatch_processed_batches_to_targets(
         async with lock:
             now_ts = time.time()
             if target_is_open(target_session, now_ts):
+                pending_batch_indexes = {
+                    batch_index
+                    for batch_index in range(real_batch_count)
+                    if target_session not in target_successes.get(batch_index, set())
+                }
+                if not pending_batch_indexes:
+                    continue
                 logger.warning(
                     f"[QQSender] 目标 {target_session} 熔断冷却中，跳过本轮发送"
                 )
-                deferred_batch_indexes.update(range(real_batch_count))
+                deferred_batch_indexes.update(pending_batch_indexes)
                 continue
 
             unified_msg_origin = target_session
@@ -137,9 +144,19 @@ async def dispatch_processed_batches_to_targets(
                 total_chunks = len(batch_chunks)
                 consecutive_failures = 0
                 for chunk_idx, chunk_batches in enumerate(batch_chunks, 1):
+                    chunk_send_batches = [
+                        batch_data
+                        for batch_data in chunk_batches
+                        if target_session
+                        not in target_successes.get(batch_data["batch_index"], set())
+                    ]
+                    if not chunk_send_batches:
+                        continue
                     chunk_nodes = []
-                    chunk_batch_indexes = [bd["batch_index"] for bd in chunk_batches]
-                    for bd in chunk_batches:
+                    chunk_batch_indexes = [
+                        bd["batch_index"] for bd in chunk_send_batches
+                    ]
+                    for bd in chunk_send_batches:
                         chunk_nodes.extend(bd["nodes_data"])
                     # 视频可以先尝试进入大合并；如果 QQ 端拒收，外层异常处理会降级为逐批发送。
                     # 音频和普通文件仍然保守拆发，避免整块合并失败。
@@ -150,12 +167,12 @@ async def dispatch_processed_batches_to_targets(
                             for node_components in batch_data["nodes_data"]
                             for component in node_components
                         )
-                        for batch_data in chunk_batches
+                        for batch_data in chunk_send_batches
                     )
                     send_each_batch = chunk_blocks_big_merge or len(chunk_nodes) <= 1
                     if send_each_batch:
                         chunk_failed = False
-                        for batch_data in chunk_batches:
+                        for batch_data in chunk_send_batches:
                             batch_index = batch_data["batch_index"]
                             try:
                                 await send_processed_batch_fn(
@@ -201,6 +218,10 @@ async def dispatch_processed_batches_to_targets(
                                     len(batch_data["nodes_data"])
                                     for chunk in batch_chunks[chunk_idx:]
                                     for batch_data in chunk
+                                    if target_session
+                                    not in target_successes.get(
+                                        batch_data["batch_index"], set()
+                                    )
                                 )
                                 logger.warning(
                                     f"[QQSender] 连续 {consecutive_failures} 块失败，"
@@ -228,7 +249,7 @@ async def dispatch_processed_batches_to_targets(
                             )
                         else:
                             await send_processed_batch_fn(
-                                batch_data=chunk_batches[0],
+                                batch_data=chunk_send_batches[0],
                                 unified_msg_origin=unified_msg_origin,
                                 self_id=self_id,
                                 node_name=node_name,
@@ -248,13 +269,13 @@ async def dispatch_processed_batches_to_targets(
                                     chunk_idx=chunk_idx,
                                     total_chunks=total_chunks,
                                     node_count=len(chunk_nodes),
-                                    batch_count=len(chunk_batches),
+                                    batch_count=len(chunk_send_batches),
                                 )
                             else:
                                 logger.info(
                                     f"[QQSender] {node_name} -> {target_session}: "
                                     f"{'混合' if is_mixed_big_merge else ''}大合并转发 "
-                                    f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_batches)} 批次)"
+                                    f"({chunk_idx}/{total_chunks}, 本块 {len(chunk_nodes)} 节点 / {len(chunk_send_batches)} 批次)"
                                 )
                         if chunk_idx < total_chunks:
                             await asyncio.sleep(chunk_delay)
@@ -282,10 +303,10 @@ async def dispatch_processed_batches_to_targets(
                         # 降级的目标是“尽可能保住可发送内容”，而不是维持原始的大合并形态。
                         # 因此后续会按批次逐个尝试，把失败影响限制在当前块内部。
                         chunk_failed = False
-                        for fallback_pos, batch_data in enumerate(chunk_batches):
+                        for fallback_pos, batch_data in enumerate(chunk_send_batches):
                             batch_index = batch_data["batch_index"]
                             has_more_fallback_batches = (
-                                fallback_pos < len(chunk_batches) - 1
+                                fallback_pos < len(chunk_send_batches) - 1
                             )
                             if target_session in target_successes.get(
                                 batch_index, set()
@@ -341,6 +362,10 @@ async def dispatch_processed_batches_to_targets(
                                 len(batch_data["nodes_data"])
                                 for chunk in batch_chunks[chunk_idx:]
                                 for batch_data in chunk
+                                if target_session
+                                not in target_successes.get(
+                                    batch_data["batch_index"], set()
+                                )
                             )
                             logger.warning(
                                 f"[QQSender] 连续 {consecutive_failures} 块失败，"
@@ -353,6 +378,8 @@ async def dispatch_processed_batches_to_targets(
                 consecutive_failures = 0
                 for batch_data in processed_batches:
                     batch_index = batch_data["batch_index"]
+                    if target_session in target_successes.get(batch_index, set()):
+                        continue
                     try:
                         await send_processed_batch_fn(
                             batch_data=batch_data,

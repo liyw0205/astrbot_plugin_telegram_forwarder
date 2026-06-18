@@ -454,6 +454,12 @@
                 "name": "合并规则配置",
                 "hint": "配置特定频道的消息合并规则",
                 "items": {
+                    "name": {
+                        "type": "string",
+                        "description": "规则名称",
+                        "default": "",
+                        "hint": "仅用于 Web 页面显示，留空时自动使用频道和规则类型生成标题"
+                    },
                     "channel": {
                         "type": "string",
                         "description": "频道用户名 (不带@)",
@@ -513,6 +519,7 @@
         "default": [
             {
                 "__template_key": "default",
+                "name": "SomeACG 默认规则",
                 "channel": "SomeACG",
                 "rule_class": "SomeACGPreviewPlusOriginal",
                 "params": {

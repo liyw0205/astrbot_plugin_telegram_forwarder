@@ -26,6 +26,11 @@ class Storage:
             "last_attempt_at": msg.get("last_attempt_at", 0),
             "last_target_session": msg.get("last_target_session", ""),
             "last_tg_target": msg.get("last_tg_target", ""),
+            "completed_qq_targets": [
+                str(target)
+                for target in msg.get("completed_qq_targets", [])
+                if str(target)
+            ],
         }
 
     def __init__(self, data_file: str | Path):
@@ -227,6 +232,7 @@ class Storage:
                     "last_attempt_at": 0,
                     "last_target_session": "",
                     "last_tg_target": "",
+                    "completed_qq_targets": [],
                 }
             )
             changed = True
@@ -243,6 +249,40 @@ class Storage:
                 continue
             item["last_tg_target"] = target_channel
             changed = True
+        if changed:
+            self.save()
+
+    def mark_pending_qq_targets_completed(
+        self, channel_name: str, msg_ids: list[int], target_sessions: list[str]
+    ) -> None:
+        if not target_sessions:
+            return
+        data = self.get_channel_data(channel_name)
+        changed = False
+        completed_targets = [str(target) for target in target_sessions if str(target)]
+        for item in data["pending_queue"]:
+            if item["id"] not in msg_ids:
+                continue
+            current = self._normalize_pending_item(item)["completed_qq_targets"]
+            merged = list(dict.fromkeys([*current, *completed_targets]))
+            if merged == current:
+                continue
+            item["completed_qq_targets"] = merged
+            changed = True
+        if changed:
+            self.save()
+
+    def clear_pending_qq_targets_completed(
+        self, channel_name: str, msg_ids: list[int]
+    ) -> None:
+        data = self.get_channel_data(channel_name)
+        changed = False
+        for item in data["pending_queue"]:
+            if item["id"] not in msg_ids:
+                continue
+            if item.get("completed_qq_targets"):
+                item["completed_qq_targets"] = []
+                changed = True
         if changed:
             self.save()
 
