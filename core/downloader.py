@@ -105,7 +105,7 @@ class MediaDownloader:
                         break
                 except asyncio.CancelledError:
                     logger.warning(f"[Downloader] 消息 {msg.id} 的下载被取消")
-                    return local_files
+                    raise
                 except Exception as e:
                     logger.warning(
                         f"[Downloader] 消息 {msg.id} 下载失败 (尝试 {attempt + 1}/{retry_count}): {e}"

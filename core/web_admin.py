@@ -150,19 +150,27 @@ class WebAdminServer:
     def _create_app(self):
         try:
             from flask import Flask, jsonify, request, send_from_directory
-            from werkzeug.serving import make_server
+            from werkzeug.serving import WSGIRequestHandler, make_server
         except Exception as exc:  # pragma: no cover - import guard for plugin load
             raise RuntimeError("Flask 未安装，请安装 requirements.txt 中的 flask") from exc
 
         root_dir = Path(__file__).resolve().parent.parent
         web_dir = root_dir / "web"
         asset_dir = web_dir / "assets"
+
+        class WebAdminRequestHandler(WSGIRequestHandler):
+            def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+                if getattr(self, "path", "").split("?", 1)[0] == "/api/status":
+                    return
+                super().log_request(code, size)
+
         app = Flask(
             __name__,
             static_folder=str(asset_dir),
             static_url_path="/assets",
         )
         self._make_server = make_server
+        self._request_handler_cls = WebAdminRequestHandler
 
         def json_ok(data: Any = None, message: str = ""):
             return jsonify({"ok": True, "message": message, "data": data or {}})
@@ -332,7 +340,12 @@ class WebAdminServer:
 
         def serve():
             try:
-                self._http_server = self._make_server(self.host, self.port, self.app)
+                self._http_server = self._make_server(
+                    self.host,
+                    self.port,
+                    self.app,
+                    request_handler=self._request_handler_cls,
+                )
                 logger.info(
                     f"[WebAdmin] Telegram Forwarder Web 已启动: http://{self.host}:{self.port}/"
                 )
