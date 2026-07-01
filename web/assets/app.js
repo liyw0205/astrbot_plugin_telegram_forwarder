@@ -99,6 +99,12 @@ const state = {
   expandedChannels: new Set(),
   channelGroups: {},
   expandedMergeRules: new Set(),
+  qqGroups: [],
+  qqGroupsAvailable: false,
+  qqGroupsMessage: "",
+  tgChannels: [],
+  tgChannelsAvailable: false,
+  tgChannelsMessage: "",
   runtimeRefreshTimer: null,
   runtimeRefreshInFlight: false,
 };
@@ -145,7 +151,9 @@ function cacheElements() {
     "submitPasswordBtn",
     "resetLoginBtn",
     "targetChannelInput",
+    "defaultQQSelector",
     "targetQQInput",
+    "resetDefaultQQBtn",
     "debugDefaultInput",
     "addChannelBtn",
     "channelList",
@@ -216,6 +224,40 @@ async function checkToken(token) {
   return Boolean(payload?.data?.authorized);
 }
 
+async function loadQQGroups({ force = false } = {}) {
+  try {
+    const data = await api(force ? "/api/qq/groups/refresh" : "/api/qq/groups", {
+      method: force ? "POST" : "GET",
+    });
+    state.qqGroups = Array.isArray(data.groups) ? data.groups : [];
+    state.qqGroupsAvailable = Boolean(data.available);
+    state.qqGroupsMessage = data.message || "";
+    return data;
+  } catch (error) {
+    state.qqGroups = [];
+    state.qqGroupsAvailable = false;
+    state.qqGroupsMessage = error.message;
+    return { groups: [], available: false, message: error.message };
+  }
+}
+
+async function loadTGChannels({ force = false } = {}) {
+  try {
+    const data = await api(force ? "/api/tg/channels/refresh" : "/api/tg/channels", {
+      method: force ? "POST" : "GET",
+    });
+    state.tgChannels = Array.isArray(data.channels) ? data.channels : [];
+    state.tgChannelsAvailable = Boolean(data.available);
+    state.tgChannelsMessage = data.message || "";
+    return data;
+  } catch (error) {
+    state.tgChannels = [];
+    state.tgChannelsAvailable = false;
+    state.tgChannelsMessage = error.message;
+    return { channels: [], available: false, message: error.message };
+  }
+}
+
 function splitList(value) {
   if (!value) return [];
   if (Array.isArray(value)) return value.map(String).map((v) => v.trim()).filter(Boolean);
@@ -224,6 +266,54 @@ function splitList(value) {
 
 function joinList(value) {
   return Array.isArray(value) ? value.join("\n") : "";
+}
+
+function uniqueList(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const value = String(item || "").trim();
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
+function isNumericGroupTarget(target) {
+  return /^\d+$/.test(String(target || "").trim());
+}
+
+function groupIdFromTarget(target) {
+  const value = String(target || "").trim();
+  if (isNumericGroupTarget(value)) return value;
+  const parts = value.split(":");
+  if (parts.length >= 3 && parts[1] === "GroupMessage" && /^\d+$/.test(parts[2])) {
+    return parts[2];
+  }
+  return "";
+}
+
+function groupByTarget(target) {
+  const groupId = groupIdFromTarget(target);
+  if (!groupId) return null;
+  return state.qqGroups.find((group) => String(group.group_id) === groupId) || null;
+}
+
+function targetForGroup(targets, groupId) {
+  return targets.find((target) => groupIdFromTarget(target) === String(groupId));
+}
+
+function channelByRef(ref) {
+  const value = String(ref || "").trim().replace(/^@/, "");
+  if (!value) return null;
+  return state.tgChannels.find((channel) => String(channel.channel_ref) === value) || null;
+}
+
+function channelTitle(ref) {
+  const channel = channelByRef(ref);
+  if (channel) return channel.title || channel.channel_ref;
+  const value = String(ref || "").trim();
+  if (!value) return "新频道";
+  return value.startsWith("-") ? value : `@${value.replace(/^@/, "")}`;
 }
 
 function intValue(id, fallback = 0) {
@@ -423,6 +513,11 @@ function renderRootConfig() {
   els.proxyInput.value = cfg.proxy || "";
   els.targetChannelInput.value = cfg.target_channel || "";
   els.targetQQInput.value = joinList(cfg.target_qq_session || []);
+  renderQQTargetSelector({
+    root: els.defaultQQSelector,
+    manualInput: els.targetQQInput,
+    inheritLabel: "未配置默认 QQ 目标",
+  });
   els.debugDefaultInput.checked = Boolean(cfg.debug_enabled_default);
 
   const web = currentWebConfig();
@@ -516,6 +611,174 @@ function renderForwardConfig() {
   els.forwardConfigForm.innerHTML = group.fields
     .map((field) => renderField(field, cfg[field.key] ?? field.defaultValue, "data-forward"))
     .join("");
+}
+
+function renderQQTargetSelector({ root, manualInput, inheritLabel = "继承默认目标" }) {
+  if (!root || !manualInput) return;
+  const targets = uniqueList(splitList(manualInput.value));
+  const keyword = String(root.dataset.search || "").trim().toLowerCase();
+  const groups = state.qqGroups.filter((group) => {
+    if (!keyword) return true;
+    return (
+      String(group.group_id || "").toLowerCase().includes(keyword) ||
+      String(group.group_name || "").toLowerCase().includes(keyword)
+    );
+  });
+  const statusText = state.qqGroupsAvailable
+    ? `${state.qqGroups.length} 个 QQ 群`
+    : state.qqGroupsMessage || "QQ 平台未就绪";
+  const selectedHtml = targets.length
+    ? targets
+        .map((target) => {
+          const group = groupByTarget(target);
+          const label = group
+            ? `${group.group_name || `群 ${group.group_id}`} (${group.group_id})`
+            : target;
+          const badge = group ? group.source || "live" : "manual";
+          return `
+            <button type="button" class="selector-pill" data-remove-target="${escapeHtml(target)}">
+              <span>${escapeHtml(label)}</span>
+              <small>${escapeHtml(badge)}</small>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="selector-empty">${escapeHtml(inheritLabel)}</div>`;
+
+  root.innerHTML = `
+    <div class="selector-toolbar">
+      <input data-selector-search type="search" placeholder="搜索 QQ 群名或群号" value="${escapeHtml(root.dataset.search || "")}" />
+      <button class="btn btn-soft" data-selector-refresh type="button">刷新群列表</button>
+    </div>
+    <div class="selector-status">${escapeHtml(statusText)}</div>
+    <div class="selector-layout">
+      <div class="selector-list">
+        ${
+          groups.length
+            ? groups
+                .map((group) => {
+                  const selected = Boolean(targetForGroup(targets, group.group_id));
+                  return `
+                    <button type="button" class="selector-row ${selected ? "selected" : ""}" data-qq-group="${escapeHtml(group.group_id)}">
+                      <span>
+                        <strong>${escapeHtml(group.group_name || `群 ${group.group_id}`)}</strong>
+                        <small>${escapeHtml(group.group_id)} · ${escapeHtml(group.member_count ?? 0)} 人</small>
+                      </span>
+                      <em>${selected ? "已选" : escapeHtml(group.source || "live")}</em>
+                    </button>
+                  `;
+                })
+                .join("")
+            : '<div class="selector-empty">没有可显示的 QQ 群。</div>'
+        }
+      </div>
+      <div class="selector-selected">
+        ${selectedHtml}
+      </div>
+    </div>
+  `;
+
+  root.querySelector("[data-selector-search]")?.addEventListener("input", (event) => {
+    root.dataset.search = event.target.value;
+    renderQQTargetSelector({ root, manualInput, inheritLabel });
+  });
+  root.querySelector("[data-selector-refresh]")?.addEventListener("click", async () => {
+    collectForms();
+    await loadQQGroups({ force: true });
+    renderAll();
+    showToast("QQ 群列表已刷新。");
+  });
+  root.querySelectorAll("[data-qq-group]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const groupId = button.dataset.qqGroup;
+      const current = uniqueList(splitList(manualInput.value));
+      const existing = targetForGroup(current, groupId);
+      const next = existing
+        ? current.filter((target) => target !== existing)
+        : [...current, groupId];
+      manualInput.value = joinList(next);
+      renderQQTargetSelector({ root, manualInput, inheritLabel });
+    });
+  });
+  root.querySelectorAll("[data-remove-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.removeTarget;
+      manualInput.value = joinList(
+        uniqueList(splitList(manualInput.value)).filter((item) => item !== target),
+      );
+      renderQQTargetSelector({ root, manualInput, inheritLabel });
+    });
+  });
+  manualInput.onchange = () => {
+    renderQQTargetSelector({ root, manualInput, inheritLabel });
+  };
+}
+
+function renderTGChannelSelector({ root, manualInput }) {
+  if (!root || !manualInput) return;
+  const currentRef = String(manualInput.value || "").trim().replace(/^@/, "");
+  const keyword = String(root.dataset.search || "").trim().toLowerCase();
+  const channels = state.tgChannels.filter((channel) => {
+    if (!keyword) return true;
+    return (
+      String(channel.title || "").toLowerCase().includes(keyword) ||
+      String(channel.username || "").toLowerCase().includes(keyword) ||
+      String(channel.channel_ref || "").toLowerCase().includes(keyword)
+    );
+  });
+  const statusText = state.tgChannelsAvailable
+    ? `${state.tgChannels.length} 个 Telegram 频道`
+    : state.tgChannelsMessage || "Telegram 未登录或未授权";
+  root.innerHTML = `
+    <div class="selector-toolbar">
+      <input data-selector-search type="search" placeholder="搜索频道标题、用户名或 ID" value="${escapeHtml(root.dataset.search || "")}" />
+      <button class="btn btn-soft" data-selector-refresh type="button">刷新频道</button>
+    </div>
+    <div class="selector-status">${escapeHtml(statusText)}</div>
+    <div class="selector-list">
+      ${
+        channels.length
+          ? channels
+              .map((channel) => {
+                const selected = String(channel.channel_ref) === currentRef;
+                const ref = channel.channel_ref || "";
+                const handle = channel.username ? `@${channel.username}` : ref;
+                return `
+                  <button type="button" class="selector-row ${selected ? "selected" : ""}" data-tg-channel="${escapeHtml(ref)}">
+                    <span>
+                      <strong>${escapeHtml(channel.title || handle)}</strong>
+                      <small>${escapeHtml(handle)} · ${escapeHtml(channel.kind || "channel")}</small>
+                    </span>
+                    <em>${selected ? "已选" : escapeHtml(channel.source || "live")}</em>
+                  </button>
+                `;
+              })
+              .join("")
+          : '<div class="selector-empty">没有可显示的 Telegram 频道。</div>'
+      }
+    </div>
+  `;
+
+  root.querySelector("[data-selector-search]")?.addEventListener("input", (event) => {
+    root.dataset.search = event.target.value;
+    renderTGChannelSelector({ root, manualInput });
+  });
+  root.querySelector("[data-selector-refresh]")?.addEventListener("click", async () => {
+    collectForms();
+    await loadTGChannels({ force: true });
+    renderAll();
+    showToast("Telegram 频道列表已刷新。");
+  });
+  root.querySelectorAll("[data-tg-channel]").forEach((button) => {
+    button.addEventListener("click", () => {
+      manualInput.value = button.dataset.tgChannel || "";
+      renderTGChannelSelector({ root, manualInput });
+    });
+  });
+  manualInput.onchange = () => {
+    manualInput.value = String(manualInput.value || "").trim();
+    renderTGChannelSelector({ root, manualInput });
+  };
 }
 
 function defaultMergeRule() {
@@ -682,8 +945,13 @@ function renderChannels() {
           const key = channelKey(cfg, index);
           const collapsed = !state.expandedChannels.has(key);
           const selectedTypes = Array.isArray(cfg.forward_types) ? cfg.forward_types : [];
-          const title = cfg.channel_username ? `@${cfg.channel_username}` : "新频道";
+          const title = cfg.channel_username ? channelTitle(cfg.channel_username) : "新频道";
           const group = activeChannelGroup(key);
+          const targetSummary = cfg.target_qq_sessions?.length
+            ? `专属 ${cfg.target_qq_sessions.length} 个 QQ 目标`
+            : state.config?.target_qq_session?.length
+              ? "继承默认 QQ 目标"
+              : "未配置 QQ 目标";
           return `
             <article class="channel-card ${collapsed ? "collapsed" : ""}" data-channel-index="${index}" data-channel-key="${escapeHtml(key)}">
               <button class="channel-summary" type="button" data-toggle-channel="${index}">
@@ -693,6 +961,7 @@ function renderChannels() {
                     <span>抓取 ${escapeHtml(cfg.msg_limit)} 条</span>
                     <span>间隔 ${escapeHtml(cfg.check_interval || "全局")} 秒</span>
                     <span>优先级 ${escapeHtml(cfg.priority || 0)}</span>
+                    <span>${escapeHtml(targetSummary)}</span>
                   </div>
                 </div>
                 <span class="chevron">⌄</span>
@@ -705,6 +974,7 @@ function renderChannels() {
                   ).join("")}
                 </div>
                 <section class="channel-section ${group === "base" ? "active" : ""}" data-channel-section="base">
+                  <div class="selector-host" data-channel-tg-selector="${index}"></div>
                   <div class="form-grid">
                     <label class="field">频道用户名<input data-channel-field="channel_username" value="${escapeHtml(cfg.channel_username)}" /></label>
                     <label class="field">起始日期<input data-channel-field="start_time" value="${escapeHtml(cfg.start_time)}" placeholder="YYYY-MM-DD" /></label>
@@ -744,7 +1014,9 @@ function renderChannels() {
                   </div>
                 </section>
                 <section class="channel-section ${group === "targets" ? "active" : ""}" data-channel-section="targets">
-                  <label class="field">专属 QQ 目标<textarea data-channel-field="target_qq_sessions" rows="4">${escapeHtml(joinList(cfg.target_qq_sessions))}</textarea></label>
+                  <div class="selector-host" data-channel-qq-selector="${index}"></div>
+                  <label class="field">手写专属目标<textarea data-channel-field="target_qq_sessions" rows="4">${escapeHtml(joinList(cfg.target_qq_sessions))}</textarea></label>
+                  <button class="btn btn-soft" data-inherit-qq-targets="${index}" type="button">恢复继承默认 QQ 目标</button>
                 </section>
                 <div class="channel-actions">
                   <button class="btn btn-soft danger" data-remove-channel="${index}" type="button">删除频道</button>
@@ -755,6 +1027,20 @@ function renderChannels() {
         })
         .join("")
     : '<div class="queue-item"><span>暂无源频道</span><strong>0</strong></div>';
+
+  document.querySelectorAll(".channel-card[data-channel-index]").forEach((card) => {
+    const tgRoot = card.querySelector("[data-channel-tg-selector]");
+    const tgInput = channelField(card, "channel_username");
+    renderTGChannelSelector({ root: tgRoot, manualInput: tgInput });
+
+    const qqRoot = card.querySelector("[data-channel-qq-selector]");
+    const qqInput = channelField(card, "target_qq_sessions");
+    renderQQTargetSelector({
+      root: qqRoot,
+      manualInput: qqInput,
+      inheritLabel: "继承默认 QQ 目标",
+    });
+  });
 
   document.querySelectorAll("[data-toggle-channel]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -786,6 +1072,15 @@ function renderChannels() {
       const index = Number.parseInt(button.dataset.removeChannel, 10);
       collectChannels();
       state.config.source_channels.splice(index, 1);
+      renderChannels();
+    });
+  });
+  document.querySelectorAll("[data-inherit-qq-targets]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.closest(".channel-card");
+      const textarea = channelField(card, "target_qq_sessions");
+      if (textarea) textarea.value = "";
+      collectChannels();
       renderChannels();
     });
   });
@@ -1073,7 +1368,12 @@ async function importSessionFromFile(file) {
 }
 
 async function loadAll() {
-  const [status, configData] = await Promise.all([api("/api/status"), api("/api/config")]);
+  const [status, configData] = await Promise.all([
+    api("/api/status"),
+    api("/api/config"),
+    loadQQGroups(),
+    loadTGChannels(),
+  ]);
   state.status = status;
   state.config = configData.config;
   renderAll();
@@ -1221,6 +1521,13 @@ function bindEvents() {
   els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。", { refresh: false }));
   els.saveBtn.addEventListener("click", () => withAction(() => saveConfig(), "配置已保存。"));
   els.saveRawBtn.addEventListener("click", () => withAction(saveRawConfig, "JSON 配置已保存。"));
+  els.resetDefaultQQBtn.addEventListener("click", () => {
+    collectRootConfig();
+    els.targetQQInput.value = "";
+    state.config.target_qq_session = [];
+    renderRootConfig();
+    showToast("默认 QQ 目标已清空，保存后生效。");
+  });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => setSection(button.dataset.section));

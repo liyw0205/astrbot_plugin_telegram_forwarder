@@ -25,6 +25,8 @@ from telethon.sessions import StringSession
 from astrbot.api import logger
 
 from .client import TelegramClientWrapper
+from .qq_group_cache import QQGroupCache
+from .tg_channel_cache import TGChannelCache
 
 PLUGIN_NAME = "astrbot_plugin_telegram_forwarder"
 
@@ -51,6 +53,8 @@ class WebAdminServer:
         self._http_server = None
         self._runtime_operations: list[dict[str, Any]] = []
         self._runtime_operation_seq = 0
+        self.qq_group_cache = QQGroupCache(plugin)
+        self.tg_channel_cache = TGChannelCache(plugin)
 
         raw_web_config = plugin.config.get("web_config", {})
         web_config = self.normalize_web_config(raw_web_config)
@@ -236,6 +240,26 @@ class WebAdminServer:
         @require_auth
         def api_get_config():
             return run_api(self.get_config())
+
+        @app.get("/api/qq/groups")
+        @require_auth
+        def api_qq_groups():
+            return run_api(self.list_qq_groups())
+
+        @app.post("/api/qq/groups/refresh")
+        @require_auth
+        def api_qq_groups_refresh():
+            return run_api(self.list_qq_groups(force=True))
+
+        @app.get("/api/tg/channels")
+        @require_auth
+        def api_tg_channels():
+            return run_api(self.list_tg_channels())
+
+        @app.post("/api/tg/channels/refresh")
+        @require_auth
+        def api_tg_channels_refresh():
+            return run_api(self.list_tg_channels(force=True))
 
         @app.post("/api/config")
         @require_auth
@@ -697,6 +721,54 @@ class WebAdminServer:
         config = self._to_plain(dict(self.plugin.config))
         config["web_config"] = self.normalize_web_config(config.get("web_config", {}))
         return {"config": config}
+
+    async def list_qq_groups(self, force: bool = False) -> dict[str, Any]:
+        return await self.qq_group_cache.list_groups(
+            self._configured_qq_group_ids(),
+            force=force,
+        )
+
+    async def list_tg_channels(self, force: bool = False) -> dict[str, Any]:
+        return await self.tg_channel_cache.list_channels(
+            self._configured_tg_channel_refs(),
+            force=force,
+        )
+
+    def _configured_qq_group_ids(self) -> list[str]:
+        group_ids: list[str] = []
+
+        def add_target(raw_target: Any) -> None:
+            target = str(raw_target or "").strip()
+            if not target:
+                return
+            group_id = ""
+            if target.isdigit():
+                group_id = target
+            else:
+                parts = target.split(":")
+                if len(parts) >= 3 and parts[1] == "GroupMessage":
+                    group_id = parts[2].strip()
+            if group_id and group_id.isdigit() and group_id not in group_ids:
+                group_ids.append(group_id)
+
+        for target in self._as_string_list(self.plugin.config.get("target_qq_session")):
+            add_target(target)
+        for channel in self.plugin.config.get("source_channels", []) or []:
+            if not isinstance(channel, dict):
+                continue
+            for target in self._as_string_list(channel.get("target_qq_sessions")):
+                add_target(target)
+        return group_ids
+
+    def _configured_tg_channel_refs(self) -> list[str]:
+        channel_refs: list[str] = []
+        for channel in self.plugin.config.get("source_channels", []) or []:
+            if not isinstance(channel, dict):
+                continue
+            channel_ref = str(channel.get("channel_username") or "").strip()
+            if channel_ref and channel_ref not in channel_refs:
+                channel_refs.append(channel_ref)
+        return channel_refs
 
     def _normalize_source_channels(self, value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):

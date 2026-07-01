@@ -785,6 +785,110 @@ select:focus {
   accent-color: var(--blue);
 }
 
+.selector-host {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.selector-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.selector-status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.selector-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.72fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.selector-list,
+.selector-selected {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.selector-row {
+  width: 100%;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  text-align: left;
+}
+
+.selector-row.selected {
+  color: var(--blue-strong);
+  background: var(--blue-soft);
+}
+
+.selector-row span,
+.selector-pill span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.selector-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selector-row small,
+.selector-row em,
+.selector-pill small,
+.selector-empty {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.selector-pill {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--blue-soft);
+  text-align: left;
+}
+
+.selector-empty {
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
 .json-editor {
   min-height: 520px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -926,8 +1030,13 @@ select:focus {
   }
 
   .form-grid,
+  .selector-layout,
   .settings-grid,
   .status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .selector-toolbar {
     grid-template-columns: 1fr;
   }
 }

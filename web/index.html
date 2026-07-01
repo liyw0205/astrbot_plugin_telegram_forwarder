@@ -210,8 +210,10 @@
                 <label class="field">目标频道<input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." /></label>
               </div>
               <div class="settings-card">
-                <h3>QQ 目标</h3>
-                <label class="field">目标会话<textarea id="targetQQInput" rows="7"></textarea></label>
+                <h3>默认 QQ 群组</h3>
+                <div id="defaultQQSelector" class="selector-host"></div>
+                <label class="field">手写目标<textarea id="targetQQInput" rows="5"></textarea></label>
+                <button class="btn btn-soft danger" id="resetDefaultQQBtn" type="button">清空默认 QQ 目标</button>
               </div>
               <div class="settings-card">
                 <h3>诊断</h3>

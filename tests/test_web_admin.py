@@ -37,6 +37,85 @@ class DummyTelegramClientWrapper:
         return None
 
 
+class FakePlatformMeta:
+    def __init__(self, platform_id="aiocqhttp", name="aiocqhttp"):
+        self.id = platform_id
+        self.name = name
+
+
+class FakeQQClient:
+    def __init__(self, groups):
+        self.groups = groups
+        self.calls = 0
+
+    async def call_action(self, action):
+        self.calls += 1
+        assert action == "get_group_list"
+        return {"data": self.groups}
+
+
+class FakeQQPlatform:
+    def __init__(self, client, platform_id="aiocqhttp"):
+        self.client = client
+        self._meta = FakePlatformMeta(platform_id, "aiocqhttp")
+
+    def meta(self):
+        return self._meta
+
+    def get_client(self):
+        return self.client
+
+
+class FakeTGClient:
+    def __init__(self, dialogs=None, *, connected=True, authorized=True):
+        self.dialogs = dialogs or []
+        self.connected = connected
+        self.authorized = authorized
+        self.calls = 0
+
+    def is_connected(self):
+        return self.connected
+
+    async def is_user_authorized(self):
+        return self.authorized
+
+    def iter_dialogs(self):
+        self.calls += 1
+
+        async def iterate():
+            for dialog in self.dialogs:
+                yield dialog
+
+        return iterate()
+
+
+def fake_dialog(
+    *,
+    title,
+    entity_id,
+    username="",
+    is_channel=True,
+    is_user=False,
+    megagroup=False,
+    broadcast=True,
+    participants_count=None,
+):
+    entity = SimpleNamespace(
+        id=entity_id,
+        username=username,
+        title=title,
+        megagroup=megagroup,
+        broadcast=broadcast,
+        participants_count=participants_count,
+    )
+    return SimpleNamespace(
+        title=title,
+        entity=entity,
+        is_channel=is_channel,
+        is_user=is_user,
+    )
+
+
 def _package(name: str, path: Path | None = None) -> ModuleType:
     module = ModuleType(name)
     module.__path__ = [] if path is None else [str(path)]
@@ -205,6 +284,295 @@ def test_save_config_rejects_malformed_merge_rules(web_admin):
 
     assert response.status_code == 400
     web_admin.plugin.config.save_config.assert_not_called()
+
+
+def test_qq_groups_requires_auth(web_admin):
+    client = web_admin.server.app.test_client()
+
+    response = client.get("/api/qq/groups")
+
+    assert response.status_code == 401
+
+
+def test_qq_groups_returns_live_groups(web_admin):
+    qq_client = FakeQQClient(
+        [
+            {
+                "group_id": 12345,
+                "group_name": "Main Group",
+                "member_count": 12,
+                "max_member_count": 500,
+            }
+        ]
+    )
+    web_admin.plugin.context = SimpleNamespace(
+        platform_manager=SimpleNamespace(
+            platform_insts=[FakeQQPlatform(qq_client, "qq-platform")]
+        )
+    )
+    client = web_admin.server.app.test_client()
+
+    response = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    payload = response.get_json()["data"]
+
+    assert response.status_code == 200
+    assert payload["available"] is True
+    assert payload["groups"] == [
+        {
+            "group_id": "12345",
+            "group_name": "Main Group",
+            "avatar": "https://p.qlogo.cn/gh/12345/12345/640",
+            "member_count": 12,
+            "max_member_count": 500,
+            "source": "live",
+            "platform_id": "qq-platform",
+            "session": "qq-platform:GroupMessage:12345",
+        }
+    ]
+
+
+def test_qq_groups_prefers_aiocqhttp_adapter_when_available(web_admin, monkeypatch):
+    class PreferredQQPlatform(FakeQQPlatform):
+        pass
+
+    monkeypatch.setitem(
+        web_admin.server.qq_group_cache._iter_qq_platforms.__globals__,
+        "AiocqhttpAdapter",
+        PreferredQQPlatform,
+    )
+    duck_client = FakeQQClient(
+        [{"group_id": 12345, "group_name": "Duck Typed Group"}]
+    )
+    preferred_client = FakeQQClient(
+        [{"group_id": 12345, "group_name": "Adapter Group"}]
+    )
+    web_admin.plugin.context = SimpleNamespace(
+        platform_manager=SimpleNamespace(
+            platform_insts=[
+                FakeQQPlatform(duck_client, "duck-platform"),
+                PreferredQQPlatform(preferred_client, "adapter-platform"),
+            ]
+        )
+    )
+    client = web_admin.server.app.test_client()
+
+    response = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    payload = response.get_json()["data"]
+
+    assert response.status_code == 200
+    assert payload["groups"][0]["group_name"] == "Adapter Group"
+    assert payload["groups"][0]["platform_id"] == "adapter-platform"
+
+
+def test_qq_groups_refresh_forces_client_call(web_admin):
+    qq_client = FakeQQClient([{"group_id": 12345, "group_name": "Main Group"}])
+    web_admin.plugin.context = SimpleNamespace(
+        platform_manager=SimpleNamespace(platform_insts=[FakeQQPlatform(qq_client)])
+    )
+    client = web_admin.server.app.test_client()
+
+    client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    client.post("/api/qq/groups/refresh", headers={"X-Admin-Token": "secret-token"})
+
+    assert qq_client.calls == 2
+
+
+def test_qq_groups_keeps_configured_numeric_fallback(web_admin):
+    web_admin.plugin.config["target_qq_session"] = ["12345", "bad"]
+    web_admin.plugin.config["source_channels"] = [
+        {"channel_username": "src", "target_qq_sessions": ["p:GroupMessage:67890"]}
+    ]
+    client = web_admin.server.app.test_client()
+
+    response = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    payload = response.get_json()["data"]
+
+    assert payload["available"] is False
+    assert [group["group_id"] for group in payload["groups"]] == ["12345", "67890"]
+    assert {group["source"] for group in payload["groups"]} == {"configured"}
+
+
+def test_qq_groups_handles_missing_platform(web_admin):
+    web_admin.plugin.context = SimpleNamespace(
+        platform_manager=SimpleNamespace(platform_insts=[])
+    )
+    client = web_admin.server.app.test_client()
+
+    response = client.get("/api/qq/groups", headers={"X-Admin-Token": "secret-token"})
+    payload = response.get_json()["data"]
+
+    assert response.status_code == 200
+    assert payload["available"] is False
+    assert payload["groups"] == []
+
+
+def test_tg_channels_requires_auth(web_admin):
+    client = web_admin.server.app.test_client()
+
+    response = client.get("/api/tg/channels")
+
+    assert response.status_code == 401
+
+
+def test_tg_channels_returns_dialog_channels(web_admin):
+    tg_client = FakeTGClient(
+        [
+            fake_dialog(
+                title="Public Channel",
+                entity_id=111,
+                username="public_channel",
+                participants_count=42,
+            ),
+            fake_dialog(
+                title="Private Supergroup",
+                entity_id=222,
+                username="",
+                megagroup=True,
+                broadcast=False,
+            ),
+            fake_dialog(
+                title="User Chat",
+                entity_id=333,
+                is_channel=False,
+                is_user=True,
+                broadcast=False,
+            ),
+        ]
+    )
+    web_admin.plugin.client_wrapper.client = tg_client
+    web_admin.plugin.client_wrapper.is_authorized = MagicMock(return_value=True)
+    client = web_admin.server.app.test_client()
+
+    response = client.get(
+        "/api/tg/channels", headers={"X-Admin-Token": "secret-token"}
+    )
+    payload = response.get_json()["data"]
+
+    assert response.status_code == 200
+    assert payload["available"] is True
+    assert payload["channels"] == [
+        {
+            "id": "222",
+            "title": "Private Supergroup",
+            "username": "",
+            "channel_ref": "-100222",
+            "kind": "supergroup",
+            "source": "live",
+            "member_count": None,
+        },
+        {
+            "id": "111",
+            "title": "Public Channel",
+            "username": "public_channel",
+            "channel_ref": "public_channel",
+            "kind": "channel",
+            "source": "live",
+            "member_count": 42,
+        },
+    ]
+
+
+def test_tg_channels_refresh_forces_dialog_reload(web_admin):
+    tg_client = FakeTGClient([fake_dialog(title="Channel", entity_id=111)])
+    web_admin.plugin.client_wrapper.client = tg_client
+    web_admin.plugin.client_wrapper.is_authorized = MagicMock(return_value=True)
+    client = web_admin.server.app.test_client()
+
+    client.get("/api/tg/channels", headers={"X-Admin-Token": "secret-token"})
+    client.post(
+        "/api/tg/channels/refresh", headers={"X-Admin-Token": "secret-token"}
+    )
+
+    assert tg_client.calls == 2
+
+
+def test_tg_channels_handles_unauthorized_client(web_admin):
+    tg_client = FakeTGClient([fake_dialog(title="Channel", entity_id=111)])
+    tg_client.authorized = False
+    web_admin.plugin.client_wrapper.client = tg_client
+    web_admin.plugin.client_wrapper.is_authorized = MagicMock(return_value=False)
+    client = web_admin.server.app.test_client()
+
+    response = client.get(
+        "/api/tg/channels", headers={"X-Admin-Token": "secret-token"}
+    )
+    payload = response.get_json()["data"]
+
+    assert response.status_code == 200
+    assert payload["available"] is False
+    assert payload["channels"] == []
+
+
+def test_tg_channels_keeps_configured_fallback(web_admin):
+    web_admin.plugin.config["source_channels"] = [
+        {"channel_username": "@configured_channel"},
+        {"channel_username": "-100987654"},
+    ]
+    client = web_admin.server.app.test_client()
+
+    response = client.get(
+        "/api/tg/channels", headers={"X-Admin-Token": "secret-token"}
+    )
+    payload = response.get_json()["data"]
+
+    assert payload["available"] is False
+    assert [channel["channel_ref"] for channel in payload["channels"]] == [
+        "-100987654",
+        "configured_channel",
+    ]
+    assert {channel["source"] for channel in payload["channels"]} == {"configured"}
+
+
+def test_save_config_preserves_manual_qq_sessions(web_admin):
+    client = web_admin.server.app.test_client()
+
+    response = client.post(
+        "/api/config",
+        headers={"X-Admin-Token": "secret-token"},
+        json={
+            "target_qq_session": [
+                "12345",
+                "platform:GroupMessage:67890",
+                "platform:FriendMessage:42",
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert web_admin.plugin.config["target_qq_session"] == [
+        "12345",
+        "platform:GroupMessage:67890",
+        "platform:FriendMessage:42",
+    ]
+
+
+def test_save_config_preserves_manual_tg_channel_refs(web_admin):
+    client = web_admin.server.app.test_client()
+
+    response = client.post(
+        "/api/config",
+        headers={"X-Admin-Token": "secret-token"},
+        json={
+            "source_channels": [
+                {"channel_username": "https://t.me/manual_channel"},
+                {"channel_username": "-100987654321"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert [
+        item["channel_username"]
+        for item in web_admin.plugin.config["source_channels"]
+    ] == ["https://t.me/manual_channel", "-100987654321"]
+
+
+def test_channel_empty_targets_means_inherit_default(web_admin):
+    result = web_admin.server._normalize_source_channels(
+        [{"channel_username": "src", "target_qq_sessions": ""}]
+    )
+
+    assert result[0]["target_qq_sessions"] == []
 
 
 @pytest.mark.asyncio
