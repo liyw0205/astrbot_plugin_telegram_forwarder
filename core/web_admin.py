@@ -49,6 +49,8 @@ class WebAdminServer:
         self._login_wrapper: TelegramClientWrapper | None = None
         self._thread: threading.Thread | None = None
         self._http_server = None
+        self._runtime_operations: list[dict[str, Any]] = []
+        self._runtime_operation_seq = 0
 
         raw_web_config = plugin.config.get("web_config", {})
         web_config = self.normalize_web_config(raw_web_config)
@@ -585,6 +587,10 @@ class WebAdminServer:
             queue_by_channel[channel] = queue_by_channel.get(channel, 0) + 1
 
         scheduler = self.plugin.scheduler
+        runtime_tasks = getattr(self, "_runtime_tasks", set())
+        send_lock = getattr(forwarder, "_send_dispatch_lock", None)
+        global_send_lock = getattr(forwarder, "_global_send_lock", None)
+        channel_locks = getattr(forwarder, "_channel_locks", {})
         return {
             "telegram": login_status,
             "web": self.normalize_web_config(self.plugin.config.get("web_config", {})),
@@ -592,6 +598,13 @@ class WebAdminServer:
                 "paused": bool(getattr(self.plugin.command_handler, "_paused", False)),
                 "scheduler_running": bool(scheduler and scheduler.running),
                 "jobs": len(scheduler.get_jobs()) if scheduler else 0,
+                "active_web_operations": len(runtime_tasks),
+                "capture_busy": any(
+                    lock.locked() for lock in getattr(channel_locks, "values", lambda: [])()
+                ),
+                "send_busy": bool(send_lock and send_lock.locked()),
+                "global_send_busy": bool(global_send_lock and global_send_lock.locked()),
+                "operations": self._runtime_operation_snapshots(),
             },
             "channels": {
                 "count": len(
@@ -608,6 +621,64 @@ class WebAdminServer:
                 "by_channel": queue_by_channel,
             },
         }
+
+    def _runtime_operation_snapshots(self) -> list[dict[str, Any]]:
+        return [
+            {
+                key: value
+                for key, value in operation.items()
+                if not key.startswith("_")
+            }
+            for operation in self._runtime_operations
+        ]
+
+    def _new_runtime_operation(self, label: str, message: str) -> dict[str, Any]:
+        self._runtime_operation_seq += 1
+        started = datetime.now()
+        operation = {
+            "id": self._runtime_operation_seq,
+            "label": label,
+            "status": "running",
+            "message": message,
+            "started_at": started.isoformat(timespec="seconds"),
+            "finished_at": "",
+            "duration_ms": None,
+            "_started_ts": started.timestamp(),
+        }
+        self._runtime_operations.insert(0, operation)
+        self._runtime_operations = self._runtime_operations[:8]
+        return operation
+
+    def _pending_queue_count(self) -> int | None:
+        storage = getattr(self.plugin.forwarder, "storage", None)
+        if storage is None:
+            return None
+        try:
+            return len(storage.get_all_pending() or [])
+        except Exception as exc:
+            logger.debug(f"[WebAdmin] 获取待发送队列数量失败: {exc}")
+            return None
+
+    @staticmethod
+    def _format_queue_count(count: int | None) -> str:
+        if count is None:
+            return ""
+        return f"（当前队列 {count} 条）"
+
+    @staticmethod
+    def _finish_runtime_operation(
+        operation: dict[str, Any], status: str, message: str
+    ) -> None:
+        finished = datetime.now()
+        operation["status"] = status
+        operation["message"] = message
+        operation["finished_at"] = finished.isoformat(timespec="seconds")
+        started_ts = operation.get("_started_ts")
+        if isinstance(started_ts, (int, float)):
+            operation["duration_ms"] = max(
+                0,
+                int((finished.timestamp() - started_ts) * 1000),
+            )
 
     async def get_config(self) -> dict[str, Any]:
         config = self._to_plain(dict(self.plugin.config))
@@ -1064,15 +1135,47 @@ class WebAdminServer:
 
     async def runtime_check(self) -> dict[str, Any]:
         self.plugin.forwarder._stopping = False
+        operation = self._new_runtime_operation(
+            "立即抓取发送",
+            "已排队，准备强制抓取频道更新。",
+        )
 
         async def run_once():
+            before_fetch = self._pending_queue_count()
+            operation["message"] = (
+                "正在强制抓取频道更新。"
+                f"{self._format_queue_count(before_fetch)}"
+            )
             await self.plugin.forwarder.check_updates(force=True)
+            after_fetch = self._pending_queue_count()
+            operation["message"] = (
+                "正在发送待发送队列。"
+                f"{self._format_queue_count(after_fetch)}"
+            )
             await self.plugin.forwarder.send_pending_messages(force_immediate=True)
+            after_send = self._pending_queue_count()
+            if after_fetch == 0 and after_send == 0:
+                operation["_success_message"] = "执行完成：抓取后没有待发送消息。"
+            elif after_send == 0 and after_fetch:
+                operation["_success_message"] = "执行完成：本轮待发送队列已处理完。"
+            elif after_fetch is not None and after_send is not None:
+                operation["_success_message"] = (
+                    f"执行完成：待发送队列 {after_fetch} -> {after_send} 条。"
+                )
+            elif after_send is not None:
+                operation["_success_message"] = (
+                    f"执行完成：当前待发送队列 {after_send} 条。"
+                )
 
-        self._track_runtime_task(run_once())
-        return {"message": "已触发一次抓取与发送。"}
+        self._track_runtime_task(run_once(), operation=operation)
+        return {
+            "message": "已开始后台执行：强制抓取后发送。",
+            "operation": self._runtime_operation_snapshots()[0],
+        }
 
-    def _track_runtime_task(self, coro) -> None:
+    def _track_runtime_task(
+        self, coro, operation: dict[str, Any] | None = None
+    ) -> None:
         task = asyncio.create_task(coro)
         runtime_tasks = getattr(self, "_runtime_tasks", None)
         if runtime_tasks is None:
@@ -1082,11 +1185,26 @@ class WebAdminServer:
         def on_done(done_task):
             runtime_tasks.discard(done_task)
             if done_task.cancelled():
+                if operation is not None:
+                    self._finish_runtime_operation(operation, "cancelled", "任务已取消。")
                 return
             try:
                 done_task.result()
             except Exception as exc:
+                if operation is not None:
+                    self._finish_runtime_operation(
+                        operation,
+                        "failed",
+                        f"执行失败：{exc}",
+                    )
                 logger.error(f"[WebAdmin] 运行任务失败: {exc}", exc_info=True)
+            else:
+                if operation is not None:
+                    self._finish_runtime_operation(
+                        operation,
+                        "success",
+                        str(operation.get("_success_message") or "执行完成。"),
+                    )
 
         task.add_done_callback(on_done)
 

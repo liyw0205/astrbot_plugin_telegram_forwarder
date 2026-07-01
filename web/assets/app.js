@@ -99,6 +99,8 @@ const state = {
   expandedChannels: new Set(),
   channelGroups: {},
   expandedMergeRules: new Set(),
+  runtimeRefreshTimer: null,
+  runtimeRefreshInFlight: false,
 };
 
 function $(id) {
@@ -126,6 +128,8 @@ function cacheElements() {
     "queueCount",
     "queueList",
     "runtimeMessage",
+    "runtimeState",
+    "runtimeLog",
     "loginBadge",
     "loginMessage",
     "loginAccountCard",
@@ -231,6 +235,68 @@ function currentWebConfig() {
   return { ...DEFAULT_WEB_CONFIG, ...(state.config?.web_config || {}) };
 }
 
+function runtimeStatusLabel(status) {
+  if (status === "running") return "运行中";
+  if (status === "success") return "完成";
+  if (status === "failed") return "失败";
+  if (status === "cancelled") return "已取消";
+  return "未知";
+}
+
+function formatRuntimeTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleTimeString("zh-CN", { hour12: false });
+  }
+  return String(value).replace("T", " ");
+}
+
+function renderRuntimeOperations(runtime) {
+  const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
+  const active = operations.find((operation) => operation.status === "running");
+  const busyNotes = [];
+  if (runtime.capture_busy) busyNotes.push("有频道正在抓取");
+  if (runtime.send_busy || runtime.global_send_busy) busyNotes.push("发送任务正在执行，定时发送会自动跳过本轮");
+  if (runtime.active_web_operations) busyNotes.push(`${runtime.active_web_operations} 个 Web 操作运行中`);
+
+  if (active) {
+    els.runtimeMessage.textContent = `${active.label}：${active.message || "正在执行。"}`;
+  } else if (busyNotes.length) {
+    els.runtimeMessage.textContent = busyNotes.join("，");
+  } else {
+    els.runtimeMessage.textContent = "手动触发、暂停或恢复转发任务。";
+  }
+
+  els.runtimeState.innerHTML = busyNotes.length
+    ? busyNotes.map((note) => `<span class="runtime-chip active">${escapeHtml(note)}</span>`).join("")
+    : '<span class="runtime-chip">当前没有 Web 运行任务</span>';
+
+  els.runtimeLog.innerHTML = operations.length
+    ? operations
+        .map((operation) => {
+          const duration = Number.isFinite(operation.duration_ms)
+            ? `${Math.max(1, Math.round(operation.duration_ms / 1000))}s`
+            : "";
+          const meta = [
+            runtimeStatusLabel(operation.status),
+            formatRuntimeTime(operation.finished_at || operation.started_at),
+            duration,
+          ].filter(Boolean).join(" · ");
+          return `
+            <div class="runtime-log-item ${escapeHtml(operation.status || "")}">
+              <div>
+                <strong>${escapeHtml(operation.label || "运行任务")}</strong>
+                <span>${escapeHtml(operation.message || "")}</span>
+              </div>
+              <small>${escapeHtml(meta)}</small>
+            </div>
+          `;
+        })
+        .join("")
+    : '<div class="runtime-log-item"><div><strong>暂无运行记录</strong><span>Web 操作会显示在这里。</span></div><small>-</small></div>';
+}
+
 function renderStatus() {
   const status = state.status || {};
   const telegram = status.telegram || {};
@@ -250,6 +316,7 @@ function renderStatus() {
     : "未启动";
   els.channelCount.textContent = String(status.channels?.count ?? 0);
   els.queueCount.textContent = String(queue.total ?? 0);
+  renderRuntimeOperations(runtime);
   els.loginBadge.textContent = telegram.authorized
     ? telegram.replace_existing
       ? "准备重新登录"
@@ -1010,6 +1077,51 @@ async function loadAll() {
   state.status = status;
   state.config = configData.config;
   renderAll();
+  syncRuntimeStatusRefresh();
+}
+
+async function loadStatusOnly() {
+  if (state.runtimeRefreshInFlight) return;
+  state.runtimeRefreshInFlight = true;
+  try {
+    state.status = await api("/api/status");
+    renderStatus();
+  } finally {
+    state.runtimeRefreshInFlight = false;
+    syncRuntimeStatusRefresh();
+  }
+}
+
+function runtimeNeedsStatusRefresh() {
+  const runtime = state.status?.runtime || {};
+  const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
+  return Boolean(
+    runtime.active_web_operations ||
+      runtime.capture_busy ||
+      runtime.send_busy ||
+      runtime.global_send_busy ||
+      operations.some((operation) => operation.status === "running"),
+  );
+}
+
+function syncRuntimeStatusRefresh() {
+  if (!runtimeNeedsStatusRefresh()) {
+    if (state.runtimeRefreshTimer) {
+      window.clearTimeout(state.runtimeRefreshTimer);
+      state.runtimeRefreshTimer = null;
+    }
+    return;
+  }
+  if (state.runtimeRefreshTimer || !state.token || els.appShell.hidden) return;
+  state.runtimeRefreshTimer = window.setTimeout(async () => {
+    state.runtimeRefreshTimer = null;
+    if (!state.token || els.appShell.hidden) return;
+    try {
+      await loadStatusOnly();
+    } catch (error) {
+      console.warn("Runtime status refresh failed:", error);
+    }
+  }, 2000);
 }
 
 function setSection(section) {
@@ -1073,10 +1185,15 @@ async function loginWithToken(event) {
   }
 }
 
-async function withAction(action, doneMessage) {
+async function withAction(action, doneMessage, options = {}) {
   try {
     const result = await action();
-    await loadAll();
+    const refresh = options.refresh ?? "all";
+    if (refresh === "status") {
+      await loadStatusOnly();
+    } else if (refresh !== false && refresh !== "none") {
+      await loadAll();
+    }
     showToast(result?.message || doneMessage);
   } catch (error) {
     showToast(error.message);
@@ -1101,7 +1218,7 @@ function bindEvents() {
     localStorage.removeItem("telegram_forwarder_token");
     window.location.reload();
   });
-  els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。"));
+  els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。", { refresh: false }));
   els.saveBtn.addEventListener("click", () => withAction(() => saveConfig(), "配置已保存。"));
   els.saveRawBtn.addEventListener("click", () => withAction(saveRawConfig, "JSON 配置已保存。"));
 
@@ -1184,12 +1301,20 @@ function bindEvents() {
     withButtonLoading(els.importSessionBtn, "正在导入...", () => importSessionFromFile(file), "登录信息已导入。");
   });
 
-  els.runCheckBtn.addEventListener("click", () => withAction(() => api("/api/runtime/check", { method: "POST" }), "已触发。"));
-  els.pauseBtn.addEventListener("click", () => withAction(() => api("/api/runtime/pause", { method: "POST" }), "已暂停。"));
-  els.resumeBtn.addEventListener("click", () => withAction(() => api("/api/runtime/resume", { method: "POST" }), "已恢复。"));
+  els.runCheckBtn.addEventListener("click", () =>
+    withAction(() => api("/api/runtime/check", { method: "POST" }), "已开始后台执行。", { refresh: "status" }),
+  );
+  els.pauseBtn.addEventListener("click", () =>
+    withAction(() => api("/api/runtime/pause", { method: "POST" }), "已暂停。", { refresh: "status" }),
+  );
+  els.resumeBtn.addEventListener("click", () =>
+    withAction(() => api("/api/runtime/resume", { method: "POST" }), "已恢复。", { refresh: "status" }),
+  );
   els.clearQueueBtn.addEventListener("click", () => {
     if (!window.confirm("确认清空全部待发送队列？")) return;
-    withAction(() => api("/api/runtime/clear-queue", { method: "POST", body: { target: "all" } }), "队列已清空。");
+    withAction(() => api("/api/runtime/clear-queue", { method: "POST", body: { target: "all" } }), "队列已清空。", {
+      refresh: "status",
+    });
   });
 }
 

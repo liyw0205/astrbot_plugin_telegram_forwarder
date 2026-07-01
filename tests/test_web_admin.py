@@ -223,15 +223,28 @@ async def test_runtime_check_forces_fetch_then_sends(web_admin):
         check_updates=AsyncMock(side_effect=check_updates),
         send_pending_messages=AsyncMock(side_effect=send_pending_messages),
     )
-    web_admin.server._track_runtime_task = captured.append
+    original_track = web_admin.server._track_runtime_task
+
+    def capture_task(coro, operation=None):
+        captured.append((coro, operation))
+
+    web_admin.server._track_runtime_task = capture_task
 
     result = await web_admin.server.runtime_check()
-    await captured[0]
+    await captured[0][0]
+    web_admin.server._finish_runtime_operation(
+        captured[0][1],
+        "success",
+        "执行完成。",
+    )
 
-    assert result["message"] == "已触发一次抓取与发送。"
+    web_admin.server._track_runtime_task = original_track
+    assert result["message"] == "已开始后台执行：强制抓取后发送。"
+    assert result["operation"]["status"] == "running"
     assert web_admin.plugin.forwarder._stopping is False
     web_admin.plugin.forwarder.check_updates.assert_awaited_once_with(force=True)
     web_admin.plugin.forwarder.send_pending_messages.assert_awaited_once_with(
         force_immediate=True
     )
     assert calls == [("check", True), ("send", True)]
+    assert web_admin.server._runtime_operation_snapshots()[0]["status"] == "success"

@@ -577,6 +577,87 @@ select:focus {
   gap: 10px;
 }
 
+.runtime-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.runtime-chip {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.runtime-chip.active {
+  color: var(--blue-strong);
+  background: var(--blue-soft);
+}
+
+.runtime-log {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.runtime-log-item {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--blue-soft);
+}
+
+.runtime-log-item div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.runtime-log-item span,
+.runtime-log-item small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.runtime-log-item.failed {
+  background: #fff1f2;
+}
+
+.runtime-log-item.failed small {
+  color: var(--danger);
+  font-weight: 800;
+}
+
+.runtime-log-item.running {
+  background: #eef7ff;
+}
+
+.runtime-log-item.running small {
+  color: var(--blue-strong);
+  font-weight: 800;
+}
+
+.runtime-log-item.success {
+  background: #effaf4;
+}
+
+.runtime-log-item.success small {
+  color: var(--success);
+  font-weight: 800;
+}
+
 .queue-item {
   display: flex;
   justify-content: space-between;
