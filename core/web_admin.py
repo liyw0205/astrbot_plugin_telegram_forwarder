@@ -177,7 +177,6 @@ class WebAdminServer:
             body = request.get_json(silent=True) or {}
             return (
                 request.headers.get("X-Admin-Token", "").strip()
-                or request.args.get("token", "").strip()
                 or str(body.get("token", "")).strip()
             )
 
