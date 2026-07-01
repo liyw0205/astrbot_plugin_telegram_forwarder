@@ -106,7 +106,9 @@ class KeywordNextNMerge(MergeRule):
 
             next_seen = 0
             window_closed_by_later_message = False
-            for _, candidate in messages[start_index + 1 :]:
+            for candidate_channel, candidate in messages[start_index + 1 :]:
+                if candidate_channel != channel_name:
+                    continue
                 time_diff = self._time_diff_seconds(trigger, candidate)
                 if time_diff is None:
                     window_closed_by_later_message = True
