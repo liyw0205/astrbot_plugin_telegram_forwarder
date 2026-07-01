@@ -640,19 +640,23 @@ class WebAdminServer:
 
     def _normalize_merge_rules(self, value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
-            return []
+            raise WebAdminError("merge_rules 必须是列表。")
 
         normalized: list[dict[str, Any]] = []
-        for item in value:
+        for idx, item in enumerate(value):
             if not isinstance(item, dict):
-                continue
+                raise WebAdminError(f"merge_rules[{idx}] 必须是对象。")
             cfg = dict(item)
             cfg["__template_key"] = cfg.get("__template_key") or "default"
             cfg["name"] = str(cfg.get("name", "") or "").strip()
             cfg["channel"] = str(cfg.get("channel", "")).lstrip("@#").strip()
             cfg["rule_class"] = str(cfg.get("rule_class", "") or "").strip()
-            params = cfg.get("params")
-            cfg["params"] = dict(params) if isinstance(params, dict) else {}
+            params = cfg.get("params", {})
+            if params is None:
+                params = {}
+            if not isinstance(params, dict):
+                raise WebAdminError(f"merge_rules[{idx}].params 必须是对象。")
+            cfg["params"] = dict(params)
             normalized.append(cfg)
         return normalized
 

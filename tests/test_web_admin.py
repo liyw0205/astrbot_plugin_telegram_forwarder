@@ -146,3 +146,62 @@ def test_query_token_is_not_accepted(web_admin):
 
     protected = client.get("/api/status?token=secret-token")
     assert protected.status_code == 401
+
+
+def test_normalize_merge_rules_keeps_valid_rules(web_admin):
+    rule = {
+        "__template_key": "custom",
+        "name": " Rule ",
+        "channel": "@channel-a",
+        "rule_class": "KeywordNextNMerge",
+        "params": {"next_count": 2},
+    }
+
+    assert web_admin.server._normalize_merge_rules([rule]) == [
+        {
+            "__template_key": "custom",
+            "name": "Rule",
+            "channel": "channel-a",
+            "rule_class": "KeywordNextNMerge",
+            "params": {"next_count": 2},
+        }
+    ]
+
+
+def test_normalize_merge_rules_defaults_none_params(web_admin):
+    assert web_admin.server._normalize_merge_rules([{"params": None}]) == [
+        {
+            "__template_key": "default",
+            "name": "",
+            "channel": "",
+            "rule_class": "",
+            "params": {},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"not": "a list"},
+        ["bad-rule"],
+        [{"params": "bad"}],
+        [{"params": ["bad"]}],
+    ],
+)
+def test_normalize_merge_rules_rejects_malformed_values(web_admin, value):
+    with pytest.raises(web_admin.module.WebAdminError):
+        web_admin.server._normalize_merge_rules(value)
+
+
+def test_save_config_rejects_malformed_merge_rules(web_admin):
+    client = web_admin.server.app.test_client()
+
+    response = client.post(
+        "/api/config",
+        headers={"X-Admin-Token": "secret-token"},
+        json={"merge_rules": ["bad-rule"]},
+    )
+
+    assert response.status_code == 400
+    web_admin.plugin.config.save_config.assert_not_called()
