@@ -750,6 +750,135 @@ async def test_send_sorted_messages_in_batches_applies_qq_budget_without_blockin
 
 
 @pytest.mark.asyncio
+async def test_send_sorted_messages_in_batches_skips_completed_qq_batch_without_budget():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 571,
+                "time": 2,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+                "completed_qq_targets": ["target-a", "target-b"],
+            },
+            {
+                "channel": "demo",
+                "id": 572,
+                "time": 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+                "completed_qq_targets": [],
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["forward_config"]["qq_send_logical_unit_budget"] = 1
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": ["target-a", "target-b"],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.qq_sender = MagicMock()
+    forwarder.qq_sender.send = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(),
+            error_types={},
+            target_sessions=("target-a", "target-b"),
+            target_sessions_by_batch={0: ("target-a", "target-b")},
+            completed_target_sessions={0: ("target-a", "target-b")},
+        )
+    )
+    forwarder.tg_sender = MagicMock()
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    summary = await forwarder._send_sorted_messages_in_batches(
+        [
+            ([type("Msg", (), {"id": 571})()], "demo"),
+            ([type("Msg", (), {"id": 572})()], "demo"),
+        ]
+    )
+
+    forwarder.qq_sender.send.assert_awaited_once()
+    sent_batches = forwarder.qq_sender.send.await_args.kwargs["batches"]
+    assert [[msg.id for msg in batch] for batch in sent_batches] == [[572]]
+    assert (
+        forwarder.qq_sender.send.await_args.kwargs[
+            "completed_target_sessions_by_batch"
+        ]
+        is None
+    )
+    assert set(summary.acked_batch_indexes) == {0, 1}
+    assert summary.failed_batch_indexes == ()
+    assert summary.deferred_batch_indexes == ()
+    assert summary.completed_target_sessions[0] == ("target-a", "target-b")
+
+
+@pytest.mark.asyncio
+async def test_send_sorted_messages_in_batches_retries_partially_completed_targets():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 573,
+                "time": 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+                "completed_qq_targets": ["target-a"],
+            }
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["forward_config"]["qq_send_logical_unit_budget"] = 1
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": ["target-a", "target-b"],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.qq_sender = MagicMock()
+    forwarder.qq_sender.send = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(),
+            failed_batch_indexes=(0,),
+            deferred_batch_indexes=(),
+            error_types={0: "send_failed"},
+            target_sessions=("target-a", "target-b"),
+            target_sessions_by_batch={0: ("target-a", "target-b")},
+            completed_target_sessions={0: ("target-a",)},
+        )
+    )
+    forwarder.tg_sender = MagicMock()
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    summary = await forwarder._send_sorted_messages_in_batches(
+        [([type("Msg", (), {"id": 573})()], "demo")]
+    )
+
+    forwarder.qq_sender.send.assert_awaited_once()
+    assert forwarder.qq_sender.send.await_args.kwargs["batches"]
+    assert forwarder.qq_sender.send.await_args.kwargs[
+        "completed_target_sessions_by_batch"
+    ] == {0: ("target-a",)}
+    assert summary.acked_batch_indexes == ()
+    assert summary.failed_batch_indexes == (0,)
+    assert summary.completed_target_sessions == {0: ("target-a",)}
+
+
+@pytest.mark.asyncio
 async def test_send_sorted_messages_in_batches_counts_album_as_one_qq_budget_unit():
     forwarder_module = load_forwarder_module()
     storage = FakeStorage([])

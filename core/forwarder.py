@@ -1618,12 +1618,16 @@ class Forwarder:
 
             qq_send_groups = defaultdict(list)
             deferred_qq_indexes: list[int] = []
+            completed_qq_indexes: list[int] = []
             qq_allowed_count = 0
             completed_qq_targets_by_batch: dict[int, list[str]] = {}
+            completed_target_sessions_by_batch: dict[int, tuple[str, ...]] = {}
 
             for batch_index, (msgs, src_channel) in enumerate(batches_with_channel):
                 effective_cfg = self._get_effective_config(src_channel)
-                target_sessions = effective_cfg["effective_target_qq_sessions"]
+                target_sessions = self._normalize_target_list(
+                    effective_cfg["effective_target_qq_sessions"]
+                )
                 if not target_sessions:
                     continue
                 completed_targets = self._completed_qq_targets_for_batch(
@@ -1631,6 +1635,12 @@ class Forwarder:
                 )
                 if completed_targets:
                     completed_qq_targets_by_batch[batch_index] = completed_targets
+                    if set(target_sessions).issubset(set(completed_targets)):
+                        completed_qq_indexes.append(batch_index)
+                        completed_target_sessions_by_batch[batch_index] = tuple(
+                            completed_targets
+                        )
+                        continue
                 if qq_send_budget > 0 and qq_allowed_count >= qq_send_budget:
                     deferred_qq_indexes.append(batch_index)
                     continue
@@ -1638,10 +1648,11 @@ class Forwarder:
                 qq_allowed_count += 1
 
             budget_summary = QQSendSummary(
-                acked_batch_indexes=(),
+                acked_batch_indexes=tuple(completed_qq_indexes),
                 failed_batch_indexes=(),
                 deferred_batch_indexes=tuple(deferred_qq_indexes),
                 error_types={},
+                completed_target_sessions=completed_target_sessions_by_batch,
             )
 
             # ─── QQ 转发部分 ───
@@ -1808,7 +1819,7 @@ class Forwarder:
                                 qq_summary, channel_summary
                             )
 
-            if deferred_qq_indexes:
+            if completed_qq_indexes or deferred_qq_indexes:
                 qq_summary = self._merge_send_summaries(qq_summary, budget_summary)
 
             # ─── Telegram 转发部分 ───
