@@ -1,0 +1,19 @@
+export const store = {
+  state: {
+    token: localStorage.getItem("telegram_forwarder_token") || "",
+    config: null,
+    status: null,
+    section: "overview",
+    forwardGroup: "schedule",
+    expandedChannels: new Set(),
+    channelGroups: {},
+  },
+  listeners: [],
+  subscribe(fn) {
+    this.listeners.push(fn);
+  },
+  updateState(changes) {
+    this.state = { ...this.state, ...changes };
+    this.listeners.forEach(fn => fn(this.state));
+  }
+};
