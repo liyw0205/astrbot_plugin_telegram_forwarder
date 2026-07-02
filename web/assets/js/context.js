@@ -154,3 +154,9 @@ export async function withButtonLoading(button, label, action, doneMessage) {
     button.textContent = originalText;
   }
 }
+
+export async function enterApp() {
+  if (els.authScreen) els.authScreen.hidden = true;
+  if (els.appShell) els.appShell.hidden = false;
+  await loadAll();
+}
