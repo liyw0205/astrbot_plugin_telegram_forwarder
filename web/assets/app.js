@@ -1,5 +1,5 @@
-const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
-const TRI_STATE = ["继承全局", "开启", "关闭"];
+export const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
+export const TRI_STATE = ["继承全局", "开启", "关闭"];
 
 const FORWARD_GROUPS = [
   {
@@ -77,19 +77,19 @@ const FORWARD_GROUPS = [
 ];
 
 const FORWARD_FIELDS = FORWARD_GROUPS.flatMap((group) => group.fields);
-const CHANNEL_GROUPS = [
+export const CHANNEL_GROUPS = [
   { id: "base", label: "基础" },
   { id: "content", label: "内容" },
   { id: "filters", label: "过滤监听" },
   { id: "targets", label: "目标" },
 ];
-const MERGE_RULE_CLASSES = [
+export const MERGE_RULE_CLASSES = [
   { value: "KeywordNextNMerge", label: "关键词后 N 条合并" },
   { value: "SomeACGPreviewPlusOriginal", label: "SomeACG 预览图+原图" },
 ];
 const DEFAULT_WEB_CONFIG = { enabled: true, host: "127.0.0.1", port: 8180, token: "" };
 
-const els = {};
+export const els = {};
 const state = {
   token: localStorage.getItem("telegram_forwarder_token") || "",
   config: null,
@@ -190,7 +190,7 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function showToast(message) {
+export function showToast(message) {
   els.toast.textContent = message;
   els.toast.classList.add("show");
   clearTimeout(showToast.timer);
@@ -224,7 +224,7 @@ async function checkToken(token) {
   return Boolean(payload?.data?.authorized);
 }
 
-async function loadQQGroups({ force = false } = {}) {
+export async function loadQQGroups({ force = false } = {}) {
   try {
     const data = await api(force ? "/api/qq/groups/refresh" : "/api/qq/groups", {
       method: force ? "POST" : "GET",
@@ -241,7 +241,7 @@ async function loadQQGroups({ force = false } = {}) {
   }
 }
 
-async function loadTGChannels({ force = false } = {}) {
+export async function loadTGChannels({ force = false } = {}) {
   try {
     const data = await api(force ? "/api/tg/channels/refresh" : "/api/tg/channels", {
       method: force ? "POST" : "GET",
@@ -1090,7 +1090,7 @@ function renderRawConfig() {
   els.rawConfigInput.value = JSON.stringify(state.config || {}, null, 2);
 }
 
-function renderAll() {
+export function renderAll() {
   renderStatus();
   renderRootConfig();
   renderForwardTabs();
@@ -1259,14 +1259,14 @@ function collectMergeRules({ keepEmpty = true } = {}) {
     .filter((rule) => keepEmpty || (rule.channel && rule.rule_class));
 }
 
-function collectForms() {
+export function collectForms() {
   collectRootConfig();
   collectForwardConfig();
   collectChannels({ keepEmpty: false });
   collectMergeRules({ keepEmpty: false });
 }
 
-async function saveConfig({ quiet = false } = {}) {
+export async function saveConfig({ quiet = false } = {}) {
   collectForms();
   const result = await api("/api/config", { method: "POST", body: { config: state.config } });
   state.config = result.config;
@@ -1367,7 +1367,7 @@ async function importSessionFromFile(file) {
   return result;
 }
 
-async function loadAll() {
+export async function loadAll() {
   const [status, configData] = await Promise.all([
     api("/api/status"),
     api("/api/config"),
@@ -1380,7 +1380,7 @@ async function loadAll() {
   syncRuntimeStatusRefresh();
 }
 
-async function loadStatusOnly() {
+export async function loadStatusOnly() {
   if (state.runtimeRefreshInFlight) return;
   state.runtimeRefreshInFlight = true;
   try {
@@ -1458,7 +1458,7 @@ function closeSidebar() {
   els.mobileMenu.classList.remove("hidden");
 }
 
-async function enterApp() {
+export async function enterApp() {
   els.authScreen.hidden = true;
   els.appShell.hidden = false;
   await loadAll();
@@ -1485,7 +1485,7 @@ async function loginWithToken(event) {
   }
 }
 
-async function withAction(action, doneMessage, options = {}) {
+export async function withAction(action, doneMessage, options = {}) {
   try {
     const result = await action();
     const refresh = options.refresh ?? "all";
@@ -1500,7 +1500,7 @@ async function withAction(action, doneMessage, options = {}) {
   }
 }
 
-async function withButtonLoading(button, label, action, doneMessage) {
+export async function withButtonLoading(button, label, action, doneMessage) {
   const originalText = button.textContent;
   button.disabled = true;
   button.textContent = label;

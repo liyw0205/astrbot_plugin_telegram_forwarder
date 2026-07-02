@@ -7,6 +7,13 @@ export const store = {
     forwardGroup: "schedule",
     expandedChannels: new Set(),
     channelGroups: {},
+    expandedMergeRules: new Set(),
+    qqGroups: [],
+    qqGroupsAvailable: false,
+    qqGroupsMessage: "",
+    tgChannels: [],
+    tgChannelsAvailable: false,
+    tgChannelsMessage: "",
   },
   listeners: [],
   subscribe(fn) {

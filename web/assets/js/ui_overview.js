@@ -1,0 +1,141 @@
+import { store } from './store.js';
+import { apiRequest } from './api.js';
+import { escapeHtml } from './utils.js';
+import { els, showToast, withAction, loadStatusOnly } from '../app.js';
+
+function runtimeStatusLabel(status) {
+  if (status === "running") return "运行中";
+  if (status === "success") return "完成";
+  if (status === "failed") return "失败";
+  if (status === "cancelled") return "已取消";
+  return "未知";
+}
+
+function formatRuntimeTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleTimeString("zh-CN", { hour12: false });
+  }
+  return String(value).replace("T", " ");
+}
+
+export function renderRuntimeOperations(runtime) {
+  const operations = Array.isArray(runtime.operations) ? runtime.operations : [];
+  const active = operations.find((operation) => operation.status === "running");
+  const busyNotes = [];
+  if (runtime.capture_busy) busyNotes.push("有频道正在抓取");
+  if (runtime.send_busy || runtime.global_send_busy) busyNotes.push("发送任务正在执行，定时发送会自动跳过本轮");
+  if (runtime.active_web_operations) busyNotes.push(`${runtime.active_web_operations} 个 Web 操作运行中`);
+
+  if (els.runtimeMessage) {
+    if (active) {
+      els.runtimeMessage.textContent = `${active.label}：${active.message || "正在执行。"}`;
+    } else if (busyNotes.length) {
+      els.runtimeMessage.textContent = busyNotes.join("，");
+    } else {
+      els.runtimeMessage.textContent = "手动触发、暂停或恢复转发任务。";
+    }
+  }
+
+  if (els.runtimeState) {
+    els.runtimeState.innerHTML = busyNotes.length
+      ? busyNotes.map((note) => `<span class="runtime-chip active">${escapeHtml(note)}</span>`).join("")
+      : '<span class="runtime-chip">当前没有 Web 运行任务</span>';
+  }
+
+  if (els.runtimeLog) {
+    els.runtimeLog.innerHTML = operations.length
+      ? operations
+          .map((operation) => {
+            const duration = Number.isFinite(operation.duration_ms)
+              ? `${Math.max(1, Math.round(operation.duration_ms / 1000))}s`
+              : "";
+            const meta = [
+              runtimeStatusLabel(operation.status),
+              formatRuntimeTime(operation.finished_at || operation.started_at),
+              duration,
+            ].filter(Boolean).join(" · ");
+            return `
+              <div class="runtime-log-item ${escapeHtml(operation.status || "")}">
+                <div>
+                  <strong>${escapeHtml(operation.label || "运行任务")}</strong>
+                  <span>${escapeHtml(operation.message || "")}</span>
+                </div>
+                <small>${escapeHtml(meta)}</small>
+              </div>
+            `;
+          })
+          .join("")
+      : '<div class="runtime-log-item"><div><strong>暂无运行记录</strong><span>Web 操作会显示在这里。</span></div><small>-</small></div>';
+  }
+}
+
+export function renderStatus() {
+  const status = store.state.status || {};
+  const telegram = status.telegram || {};
+  const runtime = status.runtime || {};
+  const queue = status.queue || {};
+  const me = telegram.me;
+
+  if (els.telegramStatus) {
+    els.telegramStatus.textContent = telegram.authorized
+      ? `已授权${me?.username ? ` @${me.username}` : ""}`
+      : telegram.connected
+        ? "已连接，未授权"
+        : "未连接";
+  }
+  if (els.schedulerStatus) {
+    els.schedulerStatus.textContent = runtime.scheduler_running
+      ? runtime.paused
+        ? "已暂停"
+        : "运行中"
+      : "未启动";
+  }
+  if (els.channelCount) {
+    els.channelCount.textContent = String(status.channels?.count ?? 0);
+  }
+  if (els.queueCount) {
+    els.queueCount.textContent = String(queue.total ?? 0);
+  }
+  
+  renderRuntimeOperations(runtime);
+
+  if (els.queueList) {
+    const entries = Object.entries(queue.by_channel || {});
+    els.queueList.innerHTML = entries.length
+      ? entries
+          .map(([channel, count]) => `<div class="queue-item"><span>${escapeHtml(channel)}</span><strong>${count}</strong></div>`)
+          .join("")
+      : '<div class="queue-item"><span>无待发送消息</span><strong>0</strong></div>';
+  }
+}
+
+export function initOverview() {
+  if (els.runCheckBtn) {
+    els.runCheckBtn.addEventListener("click", () =>
+      withAction(() => apiRequest("/api/runtime/check", "POST"), "已开始后台执行。", { refresh: "status" })
+    );
+  }
+  if (els.pauseBtn) {
+    els.pauseBtn.addEventListener("click", () =>
+      withAction(() => apiRequest("/api/runtime/pause", "POST"), "已暂停。", { refresh: "status" })
+    );
+  }
+  if (els.resumeBtn) {
+    els.resumeBtn.addEventListener("click", () =>
+      withAction(() => apiRequest("/api/runtime/resume", "POST"), "已恢复。", { refresh: "status" })
+    );
+  }
+  if (els.clearQueueBtn) {
+    els.clearQueueBtn.addEventListener("click", () => {
+      if (!window.confirm("确认清空全部待发送队列？")) return;
+      withAction(() => apiRequest("/api/runtime/clear-queue", "POST", { target: "all" }), "队列已清空。", {
+        refresh: "status",
+      });
+    });
+  }
+
+  // subscribe to store changes to re-render status
+  store.subscribe(renderStatus);
+}
