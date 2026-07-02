@@ -9,7 +9,9 @@
   --text: #2e4051;
   --muted: #7a8c9d;
   --line: #e8eff4;
-  --panel: rgba(255, 253, 248, 0.92);
+  --panel: rgba(255, 253, 248, 0.72);
+  --border-glow: rgba(49, 168, 232, 0.08);
+  --border-glow-active: rgba(49, 168, 232, 0.22);
   --bg: #f6fbff;
   --danger: #e15b64;
   --success: #21a67a;
@@ -25,7 +27,9 @@
     --text: #e5edf4;           /* Light blue-gray text */
     --muted: #708499;          /* Muted telegram steel gray */
     --line: #101921;           /* Very dark border lines */
-    --panel: rgba(24, 37, 51, 0.95);
+    --panel: rgba(24, 37, 51, 0.78);
+    --border-glow: rgba(49, 168, 232, 0.12);
+    --border-glow-active: rgba(49, 168, 232, 0.32);
     --bg: #0e1621;             /* TG desktop dark background */
     --shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
     --soft: #1e2a38;           /* Neutral secondary background */
