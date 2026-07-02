@@ -626,20 +626,23 @@ def test_static_assets_serving(web_admin):
     assert r.status_code == 200
     assert b"<!doctype html>" in r.data.lower()
     
-    # 验证 CSS 文件
-    assert client.get("/assets/style.css").status_code == 200
-    assert client.get("/assets/css/variables.css").status_code == 200
-    assert client.get("/assets/css/base.css").status_code == 200
-    assert client.get("/assets/css/components.css").status_code == 200
-    assert client.get("/assets/css/section-channels.css").status_code == 200
-    
-    # 验证 JS 模块
-    assert client.get("/assets/app.js").status_code == 200
-    assert client.get("/assets/js/api.js").status_code == 200
-    assert client.get("/assets/js/store.js").status_code == 200
-    assert client.get("/assets/js/utils.js").status_code == 200
-    assert client.get("/assets/js/ui_overview.js").status_code == 200
-    assert client.get("/assets/js/ui_login.js").status_code == 200
-    assert client.get("/assets/js/ui_selector.js").status_code == 200
-    assert client.get("/assets/js/ui_channels.js").status_code == 200
+    # 验证静态资源
+    paths = [
+        "/assets/style.css",
+        "/assets/css/variables.css",
+        "/assets/css/base.css",
+        "/assets/css/components.css",
+        "/assets/css/section-channels.css",
+        "/assets/app.js",
+        "/assets/js/context.js",
+        "/assets/js/api.js",
+        "/assets/js/store.js",
+        "/assets/js/utils.js",
+        "/assets/js/ui_overview.js",
+        "/assets/js/ui_login.js",
+        "/assets/js/ui_selector.js",
+        "/assets/js/ui_channels.js",
+    ]
+    for path in paths:
+        assert client.get(path).status_code == 200, f"Static asset {path} failed to resolve"
 
