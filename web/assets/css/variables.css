@@ -16,3 +16,20 @@
   --soft: #f1f5f9;
   --shadow: 0 18px 42px rgba(45, 118, 166, 0.11);
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cream: #182533;          /* TG dark panels */
+    --cream-soft: #202b36;     /* TG dark secondary panels */
+    --ink: #ffffff;            /* White text for contrast */
+    --text: #e5edf4;           /* Light blue-gray text */
+    --muted: #708499;          /* Muted telegram steel gray */
+    --line: #101921;           /* Very dark border lines */
+    --panel: rgba(24, 37, 51, 0.95);
+    --bg: #0e1621;             /* TG desktop dark background */
+    --shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
+    --soft: #1e2a38;           /* Neutral secondary background */
+    --blue-soft: rgba(49, 168, 232, 0.12);
+    --blue-tint: rgba(49, 168, 232, 0.22);
+  }
+}
