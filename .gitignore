@@ -33,6 +33,7 @@ pyrightconfig.json
 .omo/
 .worktrees/
 CLAUDE.md
+.superpowers/
 # Developer scripts
 condense.js
 condensed.json
