@@ -10,7 +10,8 @@ import {
   withAction,
   withButtonLoading,
   setCollectFormsCallback,
-  setRenderAllCallback
+  setRenderAllCallback,
+  bindCardPhysics
 } from './js/context.js';
 import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
@@ -554,6 +555,7 @@ async function boot() {
   
   // Bind events for entrypoint page
   bindMainEvents();
+  document.querySelectorAll(".metric-card, .bento-grid > .panel").forEach(bindCardPhysics);
 
   if (els.tokenInput) els.tokenInput.value = store.state.token || "";
   if (!store.state.token) return;

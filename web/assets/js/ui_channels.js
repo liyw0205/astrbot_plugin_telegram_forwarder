@@ -1,6 +1,6 @@
 import { store } from './store.js';
 import { escapeHtml, channelKey } from './utils.js';
-import { renderQQTargetSelector, renderTGChannelSelector, channelTitleUI, splitList, joinList } from './selector.js';
+import { renderQQTargetSelector, renderTGChannelSelector, channelTitleUI, splitList, joinList } from './ui_selector.js';
 import { els } from './context.js';
 import { MSG_TYPES, TRI_STATE, CHANNEL_GROUPS, MERGE_RULE_CLASSES } from '../app.js';
 

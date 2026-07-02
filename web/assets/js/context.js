@@ -62,6 +62,7 @@ export async function loadAll() {
     config: configData.config,
   });
   syncRuntimeStatusRefresh();
+  if (renderAllCallback) renderAllCallback();
 }
 
 export async function loadStatusOnly() {
@@ -114,6 +115,11 @@ export function setCollectFormsCallback(cb) {
   collectFormsCallback = cb;
 }
 
+let renderAllCallback = null;
+export function setRenderAllCallback(cb) {
+  renderAllCallback = cb;
+}
+
 export async function saveConfig({ quiet = false } = {}) {
   if (collectFormsCallback) collectFormsCallback();
   const result = await apiRequest("/api/config", "POST", { config: store.state.config });
@@ -159,4 +165,43 @@ export async function enterApp() {
   if (els.authScreen) els.authScreen.hidden = true;
   if (els.appShell) els.appShell.hidden = false;
   await loadAll();
+}
+
+export function bindCardPhysics(el) {
+  if (!el || !window.gsap) return;
+  
+  el.addEventListener("mouseenter", () => {
+    window.gsap.to(el, {
+      y: -4,
+      boxShadow: "0 22px 48px rgba(45, 118, 166, 0.16)",
+      duration: 0.3,
+      ease: "power2.out"
+    });
+  });
+
+  el.addEventListener("mouseleave", () => {
+    window.gsap.to(el, {
+      y: 0,
+      boxShadow: "var(--shadow)",
+      scale: 1,
+      duration: 0.3,
+      ease: "power2.out"
+    });
+  });
+
+  el.addEventListener("mousedown", () => {
+    window.gsap.to(el, {
+      scale: 0.98,
+      duration: 0.1,
+      ease: "power1.out"
+    });
+  });
+
+  el.addEventListener("mouseup", () => {
+    window.gsap.to(el, {
+      scale: 1,
+      duration: 0.25,
+      ease: "back.out(2)"
+    });
+  });
 }

@@ -121,6 +121,26 @@ export function renderStatus() {
           .join("")
       : '<div class="queue-item"><span>无待发送消息</span><strong>0</strong></div>';
   }
+
+  if (window.gsap) {
+    window.gsap.killTweensOf(".status-dot");
+    window.gsap.to(".status-dot.success", {
+      scale: 1.25,
+      opacity: 0.7,
+      duration: 1.2,
+      repeat: -1,
+      yoyo: true,
+      ease: "power1.inOut"
+    });
+    window.gsap.to(".status-dot.warning", {
+      scale: 1.25,
+      opacity: 0.7,
+      duration: 1.2,
+      repeat: -1,
+      yoyo: true,
+      ease: "power1.inOut"
+    });
+  }
 }
 
 export function initOverview() {

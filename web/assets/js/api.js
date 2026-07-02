@@ -20,8 +20,14 @@ export async function apiRequest(path, method = 'GET', body = null, timeout = 30
       localStorage.removeItem("telegram_forwarder_token");
       throw new Error("登录已过期，请重新输入 Token");
     }
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "请求失败");
+    const payload = await res.json();
+    if (!res.ok || payload?.ok === false) {
+      throw new Error(payload?.message || "请求失败");
+    }
+    const data = payload?.data ?? {};
+    if (data && typeof data === "object" && !Array.isArray(data) && payload?.message && !data.message) {
+      data.message = payload.message;
+    }
     return data;
   } catch (err) {
     clearTimeout(id);

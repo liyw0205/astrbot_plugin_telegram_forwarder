@@ -47,6 +47,12 @@ export function targetForGroup(targets, groupId) {
   return targets.find((target) => groupIdFromTarget(target) === String(groupId));
 }
 
+export function targetFromGroup(groupId) {
+  const group = store.state.qqGroups.find((item) => String(item.group_id) === String(groupId));
+  const session = String(group?.session || "").trim();
+  return session || String(groupId || "").trim();
+}
+
 export function channelByRef(ref) {
   const value = String(ref || "").trim().replace(/^@/, "");
   if (!value) return null;
@@ -154,7 +160,7 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "ๆช้
       const existing = targetForGroup(current, groupId);
       const next = existing
         ? current.filter((target) => target !== existing)
-        : [...current, groupId];
+        : [...current, targetFromGroup(groupId)];
       manualInput.value = joinList(next);
       renderQQTargetSelector({ root, manualInput, inheritLabel });
       // trigger change event to notify potential listeners
