@@ -47,57 +47,82 @@ export function updateLoginSteps() {
       els.loginMessage.textContent = "Telegram 已登录。需要切换账号时点击重新登录，新账号成功前不会清除当前登录。";
     }
     if (els.resetLoginBtn) els.resetLoginBtn.hidden = false;
-    return;
-  }
+  } else {
+    if (els.resetLoginBtn) {
+      els.resetLoginBtn.hidden = !telegram.authorized && !telegram.login_in_progress;
+    }
+    const connectStep = document.querySelector('[data-login-step="connect"]');
+    const codeStep = document.querySelector('[data-login-step="code"]');
+    const passwordStep = document.querySelector('[data-login-step="password"]');
+    
+    if (connectStep) {
+      connectStep.hidden = false;
+      connectStep.classList.add(telegram.code_sent ? "done" : "active");
+    }
 
-  if (els.resetLoginBtn) {
-    els.resetLoginBtn.hidden = !telegram.authorized && !telegram.login_in_progress;
-  }
-  const connectStep = document.querySelector('[data-login-step="connect"]');
-  const codeStep = document.querySelector('[data-login-step="code"]');
-  const passwordStep = document.querySelector('[data-login-step="password"]');
-  
-  if (connectStep) {
-    connectStep.hidden = false;
-    connectStep.classList.add(telegram.code_sent ? "done" : "active");
-  }
-
-  if (telegram.login_in_progress) {
-    if (telegram.replace_existing) {
-      if (connectStep) connectStep.hidden = false;
-      if (!telegram.code_sent) {
-        if (connectStep) {
-          connectStep.classList.remove("done");
-          connectStep.classList.add("active");
+    if (telegram.login_in_progress) {
+      if (telegram.replace_existing) {
+        if (connectStep) connectStep.hidden = false;
+        if (!telegram.code_sent) {
+          if (connectStep) {
+            connectStep.classList.remove("done");
+            connectStep.classList.add("active");
+          }
+          if (els.loginMessage) {
+            els.loginMessage.textContent = "当前账号仍然保留。填写新账号手机号并发送验证码，新账号成功后才会替换当前登录。";
+          }
+        }
+      }
+      if (telegram.code_sent) {
+        if (codeStep) {
+          codeStep.hidden = false;
+          codeStep.classList.add(telegram.need_password ? "done" : "active");
         }
         if (els.loginMessage) {
-          els.loginMessage.textContent = "当前账号仍然保留。填写新账号手机号并发送验证码，新账号成功后才会替换当前登录。";
+          els.loginMessage.textContent = telegram.need_password ? "验证码已通过，请继续提交两步验证密码。" : "验证码已发送，请输入 Telegram 收到的验证码。";
         }
-        return;
+        if (telegram.need_password) {
+          if (passwordStep) {
+            passwordStep.hidden = false;
+            passwordStep.classList.add("active");
+          }
+        }
+      } else {
+        if (!telegram.replace_existing && els.loginMessage) {
+          els.loginMessage.textContent = "填写连接信息并发送验证码。";
+        }
       }
-    }
-    if (!telegram.code_sent) {
+    } else {
       if (els.loginMessage) {
-        els.loginMessage.textContent = "填写连接信息并发送验证码。";
-      }
-      return;
-    }
-    if (codeStep) {
-      codeStep.hidden = false;
-      codeStep.classList.add(telegram.need_password ? "done" : "active");
-    }
-    if (els.loginMessage) {
-      els.loginMessage.textContent = telegram.need_password ? "验证码已通过，请继续提交两步验证密码。" : "验证码已发送，请输入 Telegram 收到的验证码。";
-    }
-    if (telegram.need_password) {
-      if (passwordStep) {
-        passwordStep.hidden = false;
-        passwordStep.classList.add("active");
+        els.loginMessage.textContent = "按顺序配置连接信息、发送验证码、提交验证码。";
       }
     }
+  }
+
+  // Stepper Header progress linkage
+  const nodeConnect = document.querySelector('[data-login-step-node="connect"]');
+  const nodeCode = document.querySelector('[data-login-step-node="code"]');
+  const nodePassword = document.querySelector('[data-login-step-node="password"]');
+
+  [nodeConnect, nodeCode, nodePassword].forEach(node => {
+    if (node) node.classList.remove("active", "done");
+  });
+
+  if (!telegram.login_in_progress && telegram.authorized && !telegram.replace_existing) {
+    [nodeConnect, nodeCode, nodePassword].forEach(node => {
+      if (node) node.classList.add("done");
+    });
   } else {
-    if (els.loginMessage) {
-      els.loginMessage.textContent = "按顺序配置连接信息、发送验证码、提交验证码。";
+    if (!telegram.code_sent) {
+      if (nodeConnect) nodeConnect.classList.add("active");
+    } else {
+      if (nodeConnect) nodeConnect.classList.add("done");
+      if (!telegram.need_password) {
+        if (nodeCode) nodeCode.classList.add("active");
+      } else {
+        if (nodeCode) nodeCode.classList.add("done");
+        if (nodePassword) nodePassword.classList.add("active");
+      }
     }
   }
 }
