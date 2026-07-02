@@ -616,3 +616,30 @@ async def test_runtime_check_forces_fetch_then_sends(web_admin):
     )
     assert calls == [("check", True), ("send", True)]
     assert web_admin.server._runtime_operation_snapshots()[0]["status"] == "success"
+
+
+def test_static_assets_serving(web_admin):
+    client = web_admin.server.app.test_client()
+    
+    # 验证主页面
+    r = client.get("/")
+    assert r.status_code == 200
+    assert b"<!doctype html>" in r.data.lower()
+    
+    # 验证 CSS 文件
+    assert client.get("/assets/style.css").status_code == 200
+    assert client.get("/assets/css/variables.css").status_code == 200
+    assert client.get("/assets/css/base.css").status_code == 200
+    assert client.get("/assets/css/components.css").status_code == 200
+    assert client.get("/assets/css/section-channels.css").status_code == 200
+    
+    # 验证 JS 模块
+    assert client.get("/assets/app.js").status_code == 200
+    assert client.get("/assets/js/api.js").status_code == 200
+    assert client.get("/assets/js/store.js").status_code == 200
+    assert client.get("/assets/js/utils.js").status_code == 200
+    assert client.get("/assets/js/ui_overview.js").status_code == 200
+    assert client.get("/assets/js/ui_login.js").status_code == 200
+    assert client.get("/assets/js/ui_selector.js").status_code == 200
+    assert client.get("/assets/js/ui_channels.js").status_code == 200
+
