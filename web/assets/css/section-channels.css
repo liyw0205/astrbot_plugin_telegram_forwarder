@@ -1,0 +1,276 @@
+.login-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.login-side {
+  display: grid;
+  gap: 16px;
+}
+
+.login-flow-card {
+  min-width: 0;
+}
+
+.login-transfer-card {
+  grid-column: 2;
+}
+
+.login-status-card {
+  position: sticky;
+  top: 28px;
+}
+
+.channel-card {
+  overflow: hidden;
+}
+
+.channel-card.collapsed .channel-body {
+  display: none;
+}
+
+.channel-summary {
+  width: 100%;
+  min-height: 66px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  background: #fff;
+  text-align: left;
+}
+
+.channel-title-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.channel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chevron {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--blue-strong);
+  background: var(--blue-soft);
+  font-weight: 900;
+  transition: transform 0.16s ease;
+}
+
+.channel-card:not(.collapsed) .chevron {
+  transform: rotate(180deg);
+}
+
+.channel-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+.channel-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin-bottom: 0;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.channel-section {
+  display: none;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.channel-section.active {
+  display: grid;
+}
+
+.channel-section h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.channel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.check-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.check-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 999px;
+  color: var(--ink);
+  background: var(--blue-soft);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.check-pill input {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  accent-color: var(--blue);
+}
+
+.selector-host {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.selector-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.selector-status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.selector-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.72fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.selector-list,
+.selector-selected {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.selector-row {
+  width: 100%;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  text-align: left;
+}
+
+.selector-row.selected {
+  color: var(--blue-strong);
+  background: var(--blue-soft);
+}
+
+.selector-row span,
+.selector-pill span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.selector-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selector-row small,
+.selector-row em,
+.selector-pill small,
+.selector-empty {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.selector-pill {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--blue-soft);
+  text-align: left;
+}
+
+.selector-empty {
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+@media (max-width: 1120px) {
+  .login-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .login-transfer-card {
+    grid-column: 1;
+  }
+
+  .login-status-card {
+    position: static;
+  }
+}
+
+@media (max-width: 820px) {
+  .selector-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .selector-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .channel-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
