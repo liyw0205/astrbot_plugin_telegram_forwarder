@@ -185,6 +185,57 @@
   font-size: 13px;
 }
 
+.relation-head {
+  align-items: flex-end;
+}
+
+.relation-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) auto;
+  gap: 10px;
+  align-items: end;
+  min-width: min(100%, 560px);
+}
+
+.relation-search {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.relation-search input {
+  min-height: 38px;
+}
+
+.relation-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.relation-filter button {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(248, 250, 252, 0.04);
+  font-size: 12px;
+  font-weight: 900;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.relation-filter button:hover,
+.relation-filter button.active {
+  color: var(--lime);
+  border-color: rgba(40, 255, 16, 0.28);
+  background: rgba(40, 255, 16, 0.1);
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
@@ -277,6 +328,34 @@
 
 .topology-readonly {
   margin-top: 12px;
+}
+
+.topology-statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.topology-statusbar span,
+.topology-statusbar strong {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(7, 11, 26, 0.22);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.topology-statusbar strong {
+  color: var(--lime);
+  border-color: rgba(40, 255, 16, 0.24);
+  background: rgba(40, 255, 16, 0.09);
 }
 
 .topology-palette {
@@ -1016,6 +1095,19 @@ select:focus {
   .queue-panel {
     min-height: 0;
   }
+
+  .relation-head {
+    align-items: flex-start;
+  }
+
+  .relation-toolbar {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .relation-filter {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 960px) {
@@ -1085,6 +1177,23 @@ select:focus {
 
   .runtime-log-item small {
     justify-self: start;
+  }
+
+  .relation-head {
+    display: grid;
+  }
+
+  .relation-toolbar {
+    min-width: 0;
+  }
+
+  .relation-filter {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .relation-filter button {
+    width: 100%;
   }
 
   .step-card {

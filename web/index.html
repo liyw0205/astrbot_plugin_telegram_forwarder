@@ -34,12 +34,12 @@
           </div>
         </div>
         <nav class="nav-list">
-          <button class="nav-item active" data-section="overview">总览</button>
-          <button class="nav-item" data-section="login">Telegram 登录</button>
-          <button class="nav-item" data-section="targets">目标配置</button>
-          <button class="nav-item" data-section="channels">频道配置</button>
+          <button class="nav-item active" data-section="overview">运行总览</button>
+          <button class="nav-item" data-section="targets">转发关系</button>
+          <button class="nav-item" data-section="channels">频道规则</button>
+          <button class="nav-item" data-section="global">转发策略</button>
           <button class="nav-item" data-section="merge">合并规则</button>
-          <button class="nav-item" data-section="global">全局转发</button>
+          <button class="nav-item" data-section="login">Telegram 登录</button>
           <button class="nav-item" data-section="web">Web 设置</button>
           <button class="nav-item" data-section="advanced">高级 JSON</button>
         </nav>
@@ -57,7 +57,7 @@
         <header class="topbar">
           <div>
             <p class="eyebrow">Forwarder Control Plane</p>
-            <h1 id="sectionTitle">总览</h1>
+            <h1 id="sectionTitle">运行总览</h1>
           </div>
           <div class="topbar-actions">
             <button class="btn btn-soft" id="refreshBtn" type="button">刷新</button>
@@ -231,18 +231,31 @@
 
         <section class="section" id="section-targets">
           <div class="panel config-panel">
-            <div class="panel-head">
+            <div class="panel-head relation-head">
               <div>
-                <h2>目标配置</h2>
-                <p>配置转发到 Telegram 与 QQ 的目标。</p>
+                <h2>转发关系工作台</h2>
+                <p>围绕 Telegram 频道到 QQ 群的关系进行配置、排查和快速定位。</p>
+              </div>
+              <div class="relation-toolbar" aria-label="拓扑筛选">
+                <label class="relation-search">
+                  <span>搜索</span>
+                  <input id="topologySearchInput" type="search" placeholder="频道或 QQ 群" autocomplete="off" />
+                </label>
+                <div class="relation-filter" id="topologyFilterGroup">
+                  <button class="active" type="button" data-topology-filter="all">全部</button>
+                  <button type="button" data-topology-filter="active">活跃</button>
+                  <button type="button" data-topology-filter="dedicated">专属</button>
+                  <button type="button" data-topology-filter="inherited">继承</button>
+                  <button type="button" data-topology-filter="unlinked">未连接</button>
+                </div>
               </div>
             </div>
             <div class="settings-grid target-settings-grid">
               <div class="settings-card target-map-card">
                 <div class="panel-head compact">
                   <div>
-                    <h3>转发拓扑</h3>
-                    <p>将频道和 QQ 群拖入图中建立关系，点击频道可进入专属目标配置。</p>
+                    <h3>关系拓扑</h3>
+                    <p>拖入频道和 QQ 群建立关系，点击频道进入专属目标配置。</p>
                   </div>
                 </div>
                 <div class="target-topology" id="targetTopology"></div>
@@ -255,7 +268,11 @@
                 <div class="target-settings-body">
                   <div class="target-setting-block target-telegram-card">
                     <h3>Telegram 目标</h3>
-                    <label class="field">目标频道<input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." /></label>
+                    <div id="targetChannelSelector" class="selector-host"></div>
+                    <label class="field target-manual-field">
+                      手动目标频道
+                      <input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." />
+                    </label>
                   </div>
                   <div class="target-setting-block target-qq-card">
                     <h3>默认 QQ 群组</h3>

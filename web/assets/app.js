@@ -16,7 +16,7 @@ import {
 import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
 import { initChannels, collectChannels, collectMergeRules, defaultChannel, renderChannels, renderMergeRules } from './js/ui_channels.js';
-import { renderQQTargetSelector, splitList, joinList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './js/ui_selector.js';
+import { renderQQTargetSelector, renderTGChannelSelector, splitList, joinList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './js/ui_selector.js';
 import { escapeHtml, channelKey } from './js/utils.js';
 
 export const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
@@ -138,6 +138,8 @@ function cacheElements() {
     "runtimeState",
     "runtimeLog",
     "overviewTopology",
+    "topologySearchInput",
+    "topologyFilterGroup",
     "loginBadge",
     "loginMessage",
     "loginAccountCard",
@@ -152,6 +154,7 @@ function cacheElements() {
     "submitCodeBtn",
     "submitPasswordBtn",
     "resetLoginBtn",
+    "targetChannelSelector",
     "targetChannelInput",
     "defaultQQSelector",
     "targetQQInput",
@@ -224,6 +227,11 @@ function queueCountForChannel(channel) {
 const TOPOLOGY_ROW_HEIGHT = 74;
 const TOPOLOGY_TOP_PADDING = 70;
 const TOPOLOGY_BOTTOM_PADDING = 70;
+const TOPOLOGY_FILTERS = new Set(["all", "active", "dedicated", "inherited", "unlinked"]);
+const topologyUiState = {
+  query: "",
+  filter: "all",
+};
 
 function topologyY(index) {
   return TOPOLOGY_TOP_PADDING + index * TOPOLOGY_ROW_HEIGHT;
@@ -241,6 +249,49 @@ function topologyNode(label, meta, side, index, attrs = "") {
 
 function topologyDragData(type, value) {
   return escapeHtml(JSON.stringify({ type, value }));
+}
+
+function topologyMatchesFilter(source, filter) {
+  if (filter === "active") return source.active;
+  if (filter === "dedicated") return source.dedicated;
+  if (filter === "inherited") return !source.dedicated && source.targets.length > 0;
+  if (filter === "unlinked") return source.targets.length === 0;
+  return true;
+}
+
+function topologyMatchesQuery(source, query) {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  const haystack = [
+    source.label,
+    source.meta,
+    ...source.targets.flatMap((target) => [target, targetLabel(target)]),
+  ].join(" ").toLowerCase();
+  return haystack.includes(normalizedQuery);
+}
+
+function topologySummary(sourceItems, allSourceItems, filter, query) {
+  const activeCount = allSourceItems.filter((source) => source.active).length;
+  const dedicatedCount = allSourceItems.filter((source) => source.dedicated).length;
+  const inheritedCount = allSourceItems.filter((source) => !source.dedicated && source.targets.length > 0).length;
+  const unlinkedCount = allSourceItems.filter((source) => source.targets.length === 0).length;
+  const filterLabel = {
+    all: "全部",
+    active: "活跃",
+    dedicated: "专属",
+    inherited: "继承",
+    unlinked: "未连接",
+  }[filter] || "全部";
+  return `
+    <div class="topology-statusbar">
+      <span>当前 ${sourceItems.length} / ${allSourceItems.length} 个频道</span>
+      <span>${activeCount} 活跃</span>
+      <span>${dedicatedCount} 专属</span>
+      <span>${inheritedCount} 继承</span>
+      <span>${unlinkedCount} 未连接</span>
+      ${(filter !== "all" || query) ? `<strong>${escapeHtml(filterLabel)}${query ? ` · ${escapeHtml(query)}` : ""}</strong>` : ""}
+    </div>
+  `;
 }
 
 function configuredChannelRefs() {
@@ -382,13 +433,17 @@ function renderTopologyInto(root, {
   emptyMessage = "还没有配置源频道。把上方 Telegram 频道拖到这里开始配置。",
   markerId = "topology-arrow",
   minStageHeight = 0,
+  query = "",
+  filter = "all",
+  showSummary = false,
 } = {}) {
   if (!root) return;
   const scrollState = captureTopologyScroll(root);
   const cfg = store.state.config || {};
   const channels = Array.isArray(cfg.source_channels) ? cfg.source_channels : [];
   const defaultTargets = uniqueList(splitList(cfg.target_qq_session || []));
-  const sourceItems = channels
+  const safeFilter = TOPOLOGY_FILTERS.has(filter) ? filter : "all";
+  const allSourceItems = channels
     .map((channel, index) => {
       const username = normalizeChannelRef(channel?.channel_username || "");
       const dedicatedTargets = uniqueList(splitList(channel?.target_qq_sessions || []));
@@ -407,6 +462,7 @@ function renderTopologyInto(root, {
       };
     })
     .filter((item) => item.label || item.targets.length);
+  const sourceItems = allSourceItems.filter((source) => topologyMatchesFilter(source, safeFilter) && topologyMatchesQuery(source, query));
 
   const targetItems = [];
   const targetIndex = new Map();
@@ -466,8 +522,9 @@ function renderTopologyInto(root, {
 
   if (!sourceItems.length) {
     root.innerHTML = `
+      ${showSummary ? topologySummary(sourceItems, allSourceItems, safeFilter, query) : ""}
       ${palette}
-      <div class="topology-empty" data-topology-drop-stage>${escapeHtml(emptyMessage)}</div>
+      <div class="topology-empty" data-topology-drop-stage>${escapeHtml(allSourceItems.length ? "没有匹配当前筛选条件的转发关系。" : emptyMessage)}</div>
     `;
     bindTargetTopologyInteractions(root, { editable, allowOpenChannel });
     restoreTopologyScroll(root, scrollState);
@@ -529,6 +586,7 @@ function renderTopologyInto(root, {
     .join("");
 
   root.innerHTML = `
+    ${showSummary ? topologySummary(sourceItems, allSourceItems, safeFilter, query) : ""}
     ${palette}
     <div class="topology-canvas" data-topology-scroll="canvas">
       <div class="topology-stage" data-topology-drop-stage style="--topology-height: ${stageHeight}px">
@@ -557,6 +615,9 @@ export function renderTargetTopology() {
     allowOpenChannel: true,
     markerId: "target-topology-arrow",
     minStageHeight: 520,
+    query: topologyUiState.query,
+    filter: topologyUiState.filter,
+    showSummary: true,
   });
 }
 
@@ -584,10 +645,16 @@ export function renderRootConfig() {
   if (els.targetChannelInput) els.targetChannelInput.value = cfg.target_channel || "";
   if (els.targetQQInput) els.targetQQInput.value = joinList(cfg.target_qq_session || []);
   
+  renderTGChannelSelector({
+    root: els.targetChannelSelector,
+    manualInput: els.targetChannelInput,
+    compact: true,
+  });
   renderQQTargetSelector({
     root: els.defaultQQSelector,
     manualInput: els.targetQQInput,
     inheritLabel: "未配置默认 QQ 目标",
+    compact: true,
   });
   renderTopologySurfaces();
   if (els.debugDefaultInput) els.debugDefaultInput.checked = Boolean(cfg.debug_enabled_default);
@@ -870,6 +937,17 @@ export function closeSidebar() {
   if (els.mobileMenu) els.mobileMenu.classList.remove("hidden");
 }
 
+function syncTopologyControls() {
+  if (els.topologySearchInput && els.topologySearchInput.value !== topologyUiState.query) {
+    els.topologySearchInput.value = topologyUiState.query;
+  }
+  els.topologyFilterGroup?.querySelectorAll("[data-topology-filter]").forEach((button) => {
+    const isActive = button.dataset.topologyFilter === topologyUiState.filter;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
 function bindMainEvents() {
   if (els.refreshBtn) {
     els.refreshBtn.addEventListener("click", () => withAction(loadAll, "已刷新。", { refresh: false }));
@@ -895,6 +973,30 @@ function bindMainEvents() {
       renderTopologySurfaces();
     });
   }
+  if (els.targetChannelInput) {
+    els.targetChannelInput.addEventListener("change", () => {
+      collectRootConfig();
+      renderTGChannelSelector({
+        root: els.targetChannelSelector,
+        manualInput: els.targetChannelInput,
+        compact: true,
+      });
+    });
+  }
+  if (els.topologySearchInput) {
+    els.topologySearchInput.addEventListener("input", () => {
+      topologyUiState.query = els.topologySearchInput.value.trim();
+      renderTargetTopology();
+    });
+  }
+  els.topologyFilterGroup?.querySelectorAll("[data-topology-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextFilter = button.dataset.topologyFilter || "all";
+      topologyUiState.filter = TOPOLOGY_FILTERS.has(nextFilter) ? nextFilter : "all";
+      syncTopologyControls();
+      renderTargetTopology();
+    });
+  });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => setSection(button.dataset.section));
@@ -932,10 +1034,16 @@ async function boot() {
   store.subscribe((state) => {
     // Whenever status or config updates in store, re-run selectors rendering
     if (state.config && els.defaultQQSelector && els.targetQQInput) {
+      renderTGChannelSelector({
+        root: els.targetChannelSelector,
+        manualInput: els.targetChannelInput,
+        compact: true,
+      });
       renderQQTargetSelector({
         root: els.defaultQQSelector,
         manualInput: els.targetQQInput,
         inheritLabel: "未配置默认 QQ 目标",
+        compact: true,
       });
       renderTopologySurfaces();
     }
@@ -948,6 +1056,7 @@ async function boot() {
   
   // Bind events for entrypoint page
   bindMainEvents();
+  syncTopologyControls();
   document.querySelectorAll(".metric-card, .overview-main > .panel").forEach(bindCardPhysics);
 
   if (els.tokenInput) els.tokenInput.value = store.state.token || "";
