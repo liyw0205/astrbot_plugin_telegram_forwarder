@@ -233,17 +233,25 @@ const topologyUiState = {
   query: "",
   filter: "all",
 };
+const topologyPointer = {
+  x: null,
+  y: null,
+};
 
 function topologyY(index) {
   return TOPOLOGY_TOP_PADDING + index * TOPOLOGY_ROW_HEIGHT;
 }
 
-function topologyNode(label, meta, side, index, attrs = "") {
+function topologyNode(label, meta, side, index, attrs = "", badge = "") {
   const y = topologyY(index);
+  const badgeHtml = badge
+    ? `<em class="topology-node-badge" aria-hidden="true">${escapeHtml(badge)}</em>`
+    : "";
   return `
     <button class="topology-node topology-node-${side}" style="--topology-y: ${y}px" type="button" ${attrs}>
       <strong>${escapeHtml(label)}</strong>
       <span>${escapeHtml(meta)}</span>
+      ${badgeHtml}
     </button>
   `;
 }
@@ -403,6 +411,132 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       }
     });
   }
+
+  // hover 聚焦：悬停 source/target 节点时，高亮关联边与端点，淡化无关节点，
+  // 避免边数多时全局噪声。鼠标离开自动恢复。
+  const focusStage = root.querySelector("[data-topology-drop-stage]");
+  const focusLines = root.querySelector(".topology-lines");
+  if (focusStage && focusLines) {
+    const focusSelector = "[data-topology-row], [data-topology-target-row]";
+    let clearFocusFrame = 0;
+    const rememberPointer = (event) => {
+      topologyPointer.x = event.clientX;
+      topologyPointer.y = event.clientY;
+    };
+    const forgetPointer = () => {
+      topologyPointer.x = null;
+      topologyPointer.y = null;
+    };
+    const cancelPendingClear = () => {
+      if (!clearFocusFrame) return;
+      window.cancelAnimationFrame(clearFocusFrame);
+      clearFocusFrame = 0;
+    };
+    const resetFocusClasses = () => {
+      focusLines.classList.remove("has-focus");
+      focusStage.classList.remove("has-focus");
+      focusLines.querySelectorAll(".edge-focus").forEach((p) => {
+        p.classList.remove("edge-focus");
+        p.style.animationDelay = "";
+      });
+      focusStage.querySelectorAll(".node-focus").forEach((n) => n.classList.remove("node-focus"));
+    };
+    const clearFocus = () => {
+      cancelPendingClear();
+      resetFocusClasses();
+      delete root.dataset.topologyFocusAttr;
+      delete root.dataset.topologyFocusValue;
+    };
+    const nearestFocusNode = (target) => target instanceof Element ? target.closest(focusSelector) : null;
+    const focusNodeAtPointer = () => {
+      if (topologyPointer.x == null || topologyPointer.y == null) return null;
+      const currentStage = root.querySelector("[data-topology-drop-stage]");
+      const node = nearestFocusNode(document.elementFromPoint(topologyPointer.x, topologyPointer.y));
+      return node && currentStage?.contains(node) ? node : null;
+    };
+    const scheduleClearFocus = () => {
+      cancelPendingClear();
+      clearFocusFrame = window.requestAnimationFrame(() => {
+        clearFocusFrame = 0;
+        if (focusNodeAtPointer()) return;
+        clearFocus();
+      });
+    };
+    const focusByEdgeAttr = (attr, value) => {
+      cancelPendingClear();
+      resetFocusClasses();
+      const edges = focusLines.querySelectorAll(`path[${attr}="${value}"]`);
+      if (!edges.length) return;
+      root.dataset.topologyFocusAttr = attr;
+      root.dataset.topologyFocusValue = value;
+      focusLines.classList.add("has-focus");
+      focusStage.classList.add("has-focus");
+      const sourceRows = new Set();
+      const targetRows = new Set();
+      const now = window.performance?.now?.() || 0;
+      const animationDelay = `-${Math.round(now % 1100)}ms, -${Math.round(now % 2400)}ms`;
+      edges.forEach((p) => {
+        p.style.animationDelay = animationDelay;
+        p.classList.add("edge-focus");
+        sourceRows.add(p.dataset.source);
+        targetRows.add(p.dataset.target);
+      });
+      sourceRows.forEach((r) => focusStage.querySelector(`[data-topology-row="${r}"]`)?.classList.add("node-focus"));
+      targetRows.forEach((r) => focusStage.querySelector(`[data-topology-target-row="${r}"]`)?.classList.add("node-focus"));
+    };
+    const focusNode = (node) => {
+      if (!node) return;
+      if (node.dataset.topologyRow != null) {
+        focusByEdgeAttr("data-source", node.dataset.topologyRow);
+      } else if (node.dataset.topologyTargetRow != null) {
+        focusByEdgeAttr("data-target", node.dataset.topologyTargetRow);
+      }
+    };
+    const restoreFocusFromPointer = () => {
+      const node = focusNodeAtPointer();
+      if (node) {
+        focusNode(node);
+      } else {
+        clearFocus();
+      }
+    };
+    focusStage.addEventListener("pointerover", (event) => {
+      rememberPointer(event);
+      const node = nearestFocusNode(event.target);
+      if (!node || nearestFocusNode(event.relatedTarget) === node) return;
+      focusNode(node);
+    });
+    focusStage.addEventListener("pointermove", rememberPointer);
+    focusStage.addEventListener("pointerout", (event) => {
+      rememberPointer(event);
+      const fromNode = nearestFocusNode(event.target);
+      const toNode = nearestFocusNode(event.relatedTarget);
+      if (!fromNode || fromNode === toNode) return;
+      if (toNode && focusStage.contains(toNode)) {
+        focusNode(toNode);
+        return;
+      }
+      scheduleClearFocus();
+    });
+    focusStage.addEventListener("pointerleave", () => {
+      forgetPointer();
+      clearFocus();
+    });
+    focusStage.addEventListener("focusin", (event) => focusNode(nearestFocusNode(event.target)));
+    focusStage.addEventListener("focusout", (event) => {
+      const fromNode = nearestFocusNode(event.target);
+      const nextNode = nearestFocusNode(event.relatedTarget);
+      if (!fromNode || fromNode === nextNode) return;
+      if (nextNode && focusStage.contains(nextNode)) {
+        focusNode(nextNode);
+        return;
+      }
+      clearFocus();
+    });
+    if (root.dataset.topologyFocusAttr && root.dataset.topologyFocusValue != null) {
+      restoreFocusFromPointer();
+    }
+  }
 }
 
 function captureTopologyScroll(root) {
@@ -470,14 +604,20 @@ function renderTopologyInto(root, {
   sourceItems.forEach((source) => {
     source.targets.forEach((target) => {
       const key = String(target || "").trim();
-      if (!key || targetIndex.has(key)) return;
-      targetIndex.set(key, targetItems.length);
-      targetItems.push({
-        id: `target-${targetItems.length}`,
-        key,
-        label: targetLabel(key),
-        meta: groupByTarget(key)?.source || "configured",
-      });
+      if (!key) return;
+      let position = targetIndex.get(key);
+      if (position == null) {
+        position = targetItems.length;
+        targetIndex.set(key, position);
+        targetItems.push({
+          id: `target-${position}`,
+          key,
+          label: targetLabel(key),
+          meta: groupByTarget(key)?.source || "configured",
+          inDegree: 0,
+        });
+      }
+      targetItems[position].inDegree += 1;
     });
   });
 
@@ -544,7 +684,7 @@ function renderTopologyInto(root, {
         source.meta,
         `source ${source.active ? "active" : ""}`,
         index,
-        `data-topology-channel="${source.index}"`,
+        `data-topology-channel="${source.index}" data-topology-row="${index}"`,
       ),
     )
     .join("");
@@ -555,7 +695,8 @@ function renderTopologyInto(root, {
         target.meta,
         "target",
         index,
-        editable ? `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"` : "",
+        `${editable ? `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"` : ""} data-topology-target-row="${index}"`,
+        target.inDegree > 1 ? `${target.inDegree} 源` : "",
       ),
     ).join("")
     : '<div class="topology-empty topology-empty-target">未选择 QQ 群目标</div>';
@@ -567,7 +708,8 @@ function renderTopologyInto(root, {
         if (targetPosition == null) return "";
         const y1 = topologyY(sourceIndex);
         const y2 = topologyY(targetPosition);
-        return `<path class="${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}" marker-end="url(#${markerId})" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
+        const edgeClass = `${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}`;
+        return `<path class="${edgeClass}" data-source="${sourceIndex}" data-target="${targetPosition}" marker-end="url(#${markerId})" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
       }),
     )
     .join("");

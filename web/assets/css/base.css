@@ -11,13 +11,12 @@ body {
   margin: 0;
   min-height: 100%;
   color: var(--text);
+  /* 蓝白 mesh 背景：柔和天蓝光斑 + 淡蓝白垂直渐变，替代原网格 + 荧光绿扫描线 */
   background:
-    linear-gradient(rgba(56, 189, 248, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
-    linear-gradient(115deg, transparent 0%, rgba(40, 255, 16, 0.055) 54%, transparent 78%),
-    linear-gradient(180deg, #070b1a 0%, #0a1024 52%, #07111f 100%);
+    radial-gradient(900px 500px at 88% -8%, rgba(56, 189, 248, 0.18), transparent 62%),
+    radial-gradient(720px 420px at 0% 8%, rgba(34, 158, 217, 0.12), transparent 58%),
+    linear-gradient(180deg, #f6f9fc 0%, #eef3fa 100%);
   background-attachment: fixed;
-  background-size: 50px 50px, 50px 50px, 100% 100%, 100% 100%;
   font-family: "DM Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }
@@ -49,12 +48,11 @@ select {
   display: grid;
   place-items: center;
   padding: 24px;
+  /* 登录首屏：稍强的蓝色光晕，作为视觉记忆点 */
   background:
-    linear-gradient(rgba(56, 189, 248, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
-    linear-gradient(140deg, rgba(40, 255, 16, 0.12), transparent 36%),
-    linear-gradient(180deg, #070b1a, #0a1024 60%, #07111f);
-  background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
+    radial-gradient(720px 400px at 78% 6%, rgba(56, 189, 248, 0.24), transparent 60%),
+    radial-gradient(560px 320px at 6% 92%, rgba(34, 158, 217, 0.16), transparent 58%),
+    linear-gradient(180deg, #f6f9fc, #e9f0f9);
 }
 
 .auth-panel {
@@ -63,9 +61,8 @@ select {
   gap: 18px;
   padding: 30px;
   border: 1px solid var(--border-glow);
-  border-radius: 8px;
+  border-radius: 14px;
   background: var(--panel);
-  backdrop-filter: blur(20px);
   box-shadow: var(--shadow);
   animation: panel-in 0.36s ease both;
 }
@@ -75,10 +72,11 @@ select {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: #05101f;
-  background: linear-gradient(135deg, var(--blue), var(--lime));
+  color: #ffffff;
+  /* Telegram 蓝 → 天蓝青的活力渐变 */
+  background: linear-gradient(135deg, var(--primary), var(--accent));
   font-weight: 800;
-  box-shadow: 0 0 0 1px rgba(248, 250, 252, 0.16), 0 12px 28px rgba(40, 255, 16, 0.18);
+  box-shadow: 0 0 0 1px rgba(34, 158, 217, 0.24), 0 12px 28px rgba(34, 158, 217, 0.28);
 }
 
 .auth-logo {
@@ -129,10 +127,8 @@ select {
   flex-direction: column;
   padding: 18px 14px;
   border-right: 1px solid var(--line);
-  background:
-    linear-gradient(180deg, rgba(17, 24, 50, 0.94), rgba(7, 11, 26, 0.88)),
-    var(--panel-solid);
-  backdrop-filter: blur(22px);
+  /* 白底带淡蓝渐变，替代深色玻璃 */
+  background: linear-gradient(180deg, #ffffff, #f4f8fc);
   transition: background 0.3s ease, border-color 0.3s ease;
 }
 
@@ -165,24 +161,24 @@ select {
   width: 100%;
   min-height: 44px;
   padding: 0 14px;
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--muted);
   background: transparent;
   text-align: left;
-  font-weight: 700;
+  font-weight: 600;
   transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .nav-item:hover {
-  color: var(--ink);
-  background: rgba(56, 189, 248, 0.1);
+  color: var(--primary);
+  background: var(--primary-soft);
   transform: translateX(2px);
 }
 
 .nav-item.active {
-  color: #06101f;
-  background: linear-gradient(135deg, var(--lime), #14d4ff);
-  box-shadow: 0 12px 30px rgba(40, 255, 16, 0.18);
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  box-shadow: 0 10px 24px rgba(34, 158, 217, 0.28);
 }
 
 .sidebar-exit {
@@ -213,7 +209,7 @@ select {
 
 .eyebrow {
   margin: 0;
-  color: var(--lime);
+  color: var(--primary);
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
@@ -246,6 +242,7 @@ select {
     width: min(84vw, 306px);
     transform: translateX(-102%);
     transition: transform 0.2s ease;
+    box-shadow: var(--shadow);
   }
 
   .sidebar.open {
@@ -257,7 +254,7 @@ select {
     inset: 0;
     z-index: 20;
     display: block;
-    background: rgba(23, 33, 43, 0.34);
+    background: rgba(15, 23, 42, 0.32);
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.2s ease;
@@ -278,7 +275,7 @@ select {
     display: grid;
     place-items: center;
     border-radius: 50%;
-    background: linear-gradient(135deg, var(--blue), var(--lime));
+    background: linear-gradient(135deg, var(--primary), var(--accent));
     box-shadow: var(--shadow);
   }
 
@@ -295,7 +292,7 @@ select {
     width: 21px;
     height: 2px;
     border-radius: 99px;
-    background: #05101f;
+    background: #ffffff;
   }
 
   .content {
@@ -315,9 +312,10 @@ select {
     margin-left: -56px;
     padding: 8px;
     border: 1px solid var(--line);
-    border-radius: 8px;
-    background: rgba(17, 24, 50, 0.94);
+    border-radius: 12px;
+    background: var(--overlay);
     backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
     box-shadow: var(--shadow);
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -334,6 +332,7 @@ select {
     background: transparent;
     box-shadow: none;
     backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .topbar-actions .btn {
@@ -402,4 +401,3 @@ select {
     font-size: 20px;
   }
 }
-
