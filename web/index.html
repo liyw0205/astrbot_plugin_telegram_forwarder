@@ -30,7 +30,7 @@
           <div class="brand-dot">TG</div>
           <div>
             <strong>Telegram Forwarder</strong>
-            <span id="navSubtitle">Blue Console</span>
+            <span id="navSubtitle">Secure Console</span>
           </div>
         </div>
         <nav class="nav-list">
@@ -56,7 +56,7 @@
       <main class="content">
         <header class="topbar">
           <div>
-            <p class="eyebrow">Telegram Style Settings</p>
+            <p class="eyebrow">Forwarder Control Plane</p>
             <h1 id="sectionTitle">总览</h1>
           </div>
           <div class="topbar-actions">
@@ -66,52 +66,53 @@
         </header>
 
         <section class="section active" id="section-overview">
-          <div class="bento-grid">
-            <!-- 4个指标卡片 -->
-            <div class="metric-card metric-blue bento-item" style="grid-column: span 1;">
-              <span>Telegram</span>
-              <strong id="telegramStatus">-</strong>
-            </div>
-            <div class="metric-card bento-item" style="grid-column: span 1;">
-              <span>调度器</span>
-              <strong id="schedulerStatus">-</strong>
-            </div>
-            <div class="metric-card bento-item" style="grid-column: span 1;">
-              <span>监控频道</span>
-              <strong id="channelCount">-</strong>
-            </div>
-            <div class="metric-card bento-item" style="grid-column: span 1;">
-              <span>待发送队列</span>
-              <strong id="queueCount">-</strong>
+          <div class="overview-layout">
+            <div class="status-grid">
+              <div class="metric-card metric-blue">
+                <span>Telegram</span>
+                <strong id="telegramStatus">-</strong>
+              </div>
+              <div class="metric-card">
+                <span>调度器</span>
+                <strong id="schedulerStatus">-</strong>
+              </div>
+              <div class="metric-card">
+                <span>监控频道</span>
+                <strong id="channelCount">-</strong>
+              </div>
+              <div class="metric-card">
+                <span>待发送队列</span>
+                <strong id="queueCount">-</strong>
+              </div>
             </div>
 
-            <!-- 运行操作面板 -->
-            <div class="panel bento-item" style="grid-column: span 3; grid-row: span 2;">
-              <div class="panel-head">
-                <div>
-                  <h2>运行操作</h2>
-                  <p id="runtimeMessage">手动触发、暂停或恢复转发任务。</p>
+            <div class="overview-main">
+              <div class="panel runtime-panel">
+                <div class="panel-head">
+                  <div>
+                    <h2>运行操作</h2>
+                    <p id="runtimeMessage">手动触发、暂停或恢复转发任务。</p>
+                  </div>
                 </div>
+                <div class="action-row">
+                  <button class="btn btn-primary" id="runCheckBtn" type="button">立即抓取发送</button>
+                  <button class="btn btn-soft" id="pauseBtn" type="button">暂停</button>
+                  <button class="btn btn-soft" id="resumeBtn" type="button">恢复</button>
+                  <button class="btn btn-soft danger" id="clearQueueBtn" type="button">清空队列</button>
+                </div>
+                <div class="runtime-state" id="runtimeState"></div>
+                <div class="runtime-log" id="runtimeLog"></div>
               </div>
-              <div class="action-row">
-                <button class="btn btn-primary" id="runCheckBtn" type="button">立即抓取发送</button>
-                <button class="btn btn-soft" id="pauseBtn" type="button">暂停</button>
-                <button class="btn btn-soft" id="resumeBtn" type="button">恢复</button>
-                <button class="btn btn-soft danger" id="clearQueueBtn" type="button">清空队列</button>
-              </div>
-              <div class="runtime-state" id="runtimeState"></div>
-              <div class="runtime-log" id="runtimeLog"></div>
-            </div>
 
-            <!-- 队列分布面板 -->
-            <div class="panel bento-item" style="grid-column: span 1; grid-row: span 2;">
-              <div class="panel-head">
-                <div>
-                  <h2>队列分布</h2>
-                  <p>按频道查看待发送消息数量。</p>
+              <div class="panel queue-panel">
+                <div class="panel-head">
+                  <div>
+                    <h2>队列分布</h2>
+                    <p>按频道查看待发送消息数量。</p>
+                  </div>
                 </div>
+                <div class="queue-list" id="queueList"></div>
               </div>
-              <div class="queue-list" id="queueList"></div>
             </div>
           </div>
         </section>
@@ -201,12 +202,12 @@
             </div>
 
             <div class="panel login-transfer-card">
-                <div class="panel-head">
-                  <div>
-                    <h2>登录信息导入导出</h2>
-                    <p>导出精简登录信息，只包含授权所需内容，不包含缓存记录。</p>
-                  </div>
+              <div class="panel-head">
+                <div>
+                  <h2>登录信息导入导出</h2>
+                  <p>导出精简登录信息，只包含授权所需内容，不包含缓存记录。</p>
                 </div>
+              </div>
               <div class="settings-card">
                 <div class="action-row">
                   <button class="btn btn-soft" id="exportSessionBtn" type="button">导出登录信息</button>
@@ -219,37 +220,46 @@
         </section>
 
         <section class="section" id="section-targets">
-          <div class="panel">
+          <div class="panel config-panel">
             <div class="panel-head">
               <div>
                 <h2>目标配置</h2>
                 <p>配置转发到 Telegram 与 QQ 的目标。</p>
               </div>
             </div>
-            <div class="settings-grid">
-              <div class="settings-card">
+            <div class="settings-grid target-settings-grid">
+              <div class="settings-card target-telegram-card">
                 <h3>Telegram 目标</h3>
                 <label class="field">目标频道<input id="targetChannelInput" type="text" placeholder="@channel 或 -100..." /></label>
               </div>
-              <div class="settings-card">
+              <div class="settings-card target-qq-card">
                 <h3>默认 QQ 群组</h3>
                 <div id="defaultQQSelector" class="selector-host"></div>
-                <label class="field">手写目标<textarea id="targetQQInput" rows="5"></textarea></label>
+                <textarea id="targetQQInput" hidden></textarea>
                 <button class="btn btn-soft danger" id="resetDefaultQQBtn" type="button">清空默认 QQ 目标</button>
               </div>
-              <div class="settings-card">
+              <div class="settings-card target-diagnostics-card">
                 <h3>诊断</h3>
                 <label class="toggle-row">
                   <input id="debugDefaultInput" type="checkbox" />
                   <span>默认开启 QQ 发送诊断日志</span>
                 </label>
               </div>
+              <div class="settings-card target-map-card">
+                <div class="panel-head compact">
+                  <div>
+                    <h3>转发拓扑</h3>
+                    <p>按频道查看实际转发到哪些 QQ 群。</p>
+                  </div>
+                </div>
+                <div class="target-topology" id="targetTopology"></div>
+              </div>
             </div>
           </div>
         </section>
 
         <section class="section" id="section-channels">
-          <div class="panel">
+          <div class="panel list-panel">
             <div class="panel-head">
               <div>
                 <h2>频道配置</h2>
@@ -262,7 +272,7 @@
         </section>
 
         <section class="section" id="section-global">
-          <div class="panel">
+          <div class="panel config-panel">
             <div class="panel-head">
               <div>
                 <h2>全局转发配置</h2>
@@ -275,7 +285,7 @@
         </section>
 
         <section class="section" id="section-merge">
-          <div class="panel">
+          <div class="panel list-panel">
             <div class="panel-head">
               <div>
                 <h2>合并规则</h2>
@@ -288,7 +298,7 @@
         </section>
 
         <section class="section" id="section-web">
-          <div class="panel">
+          <div class="panel config-panel">
             <div class="panel-head">
               <div>
                 <h2>Web 设置</h2>
@@ -315,7 +325,7 @@
         </section>
 
         <section class="section" id="section-advanced">
-          <div class="panel">
+          <div class="panel advanced-panel">
             <div class="panel-head">
               <div>
                 <h2>完整配置 JSON</h2>

@@ -1,21 +1,26 @@
 .login-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  grid-template-areas:
+    "side flow"
+    "side transfer";
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
 .login-side {
+  grid-area: side;
   display: grid;
   gap: 16px;
 }
 
 .login-flow-card {
+  grid-area: flow;
   min-width: 0;
 }
 
 .login-transfer-card {
-  grid-column: 2;
+  grid-area: transfer;
 }
 
 .login-status-card {
@@ -35,18 +40,25 @@
   width: 100%;
   min-height: 66px;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 14px 16px;
-  background: #fff;
+  background: rgba(7, 11, 26, 0.34);
   text-align: left;
+  transition: background 0.18s ease;
+}
+
+.channel-summary:hover {
+  background: rgba(56, 189, 248, 0.075);
 }
 
 .channel-title-text {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--ink);
   font-weight: 900;
 }
@@ -66,8 +78,8 @@
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: var(--blue-strong);
-  background: var(--blue-soft);
+  color: var(--lime);
+  background: var(--lime-soft);
   font-weight: 900;
   transition: transform 0.16s ease;
 }
@@ -80,6 +92,8 @@
   display: grid;
   gap: 12px;
   padding: 0 16px 16px;
+  animation: channel-open 0.2s ease both;
+  min-width: 0;
 }
 
 .channel-tabs {
@@ -87,7 +101,8 @@
   top: 0;
   z-index: 1;
   margin-bottom: 0;
-  background: rgba(255, 255, 255, 0.58);
+  background: rgba(7, 11, 26, 0.68);
+  backdrop-filter: blur(16px);
 }
 
 .channel-section {
@@ -96,7 +111,8 @@
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(7, 11, 26, 0.28);
+  min-width: 0;
 }
 
 .channel-section.active {
@@ -112,6 +128,7 @@
 .channel-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
 }
 
 .check-group {
@@ -128,7 +145,8 @@
   padding: 0 11px;
   border-radius: 999px;
   color: var(--ink);
-  background: var(--blue-soft);
+  border: 1px solid rgba(56, 189, 248, 0.12);
+  background: rgba(14, 165, 233, 0.1);
   font-size: 13px;
   font-weight: 800;
 }
@@ -148,7 +166,7 @@
 
 .selector-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(116px, auto);
   gap: 10px;
   align-items: center;
 }
@@ -161,7 +179,7 @@
 
 .selector-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.72fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.72fr);
   gap: 10px;
   min-width: 0;
 }
@@ -172,12 +190,12 @@
   gap: 8px;
   align-content: start;
   min-width: 0;
-  max-height: 260px;
+  max-height: min(300px, 42vh);
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: rgba(7, 11, 26, 0.35);
 }
 
 .selector-row {
@@ -190,13 +208,22 @@
   padding: 9px 10px;
   border-radius: 8px;
   color: var(--ink);
-  background: #fff;
+  border: 1px solid transparent;
+  background: rgba(248, 250, 252, 0.055);
   text-align: left;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
 
 .selector-row.selected {
-  color: var(--blue-strong);
-  background: var(--blue-soft);
+  color: var(--lime);
+  border-color: rgba(40, 255, 16, 0.24);
+  background: var(--lime-soft);
+}
+
+.selector-row:hover {
+  border-color: rgba(56, 189, 248, 0.2);
+  background: rgba(56, 189, 248, 0.1);
+  transform: translateY(-1px);
 }
 
 .selector-row span,
@@ -207,6 +234,13 @@
 }
 
 .selector-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selector-row small,
+.selector-pill small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -231,8 +265,15 @@
   padding: 8px 10px;
   border-radius: 8px;
   color: var(--ink);
-  background: var(--blue-soft);
+  border: 1px solid rgba(40, 255, 16, 0.18);
+  background: var(--lime-soft);
   text-align: left;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.selector-pill:hover {
+  border-color: rgba(40, 255, 16, 0.34);
+  transform: translateY(-1px);
 }
 
 .selector-empty {
@@ -242,15 +283,27 @@
   padding: 10px;
   border: 1px dashed var(--line);
   border-radius: 8px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+@keyframes channel-open {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 1120px) {
   .login-layout {
+    grid-template-areas:
+      "side"
+      "flow"
+      "transfer";
     grid-template-columns: 1fr;
-  }
-
-  .login-transfer-card {
-    grid-column: 1;
   }
 
   .login-status-card {
@@ -270,7 +323,26 @@
 
 @media (max-width: 480px) {
   .channel-summary {
-    grid-template-columns: 1fr;
+    min-height: 60px;
+    padding: 12px;
+  }
+
+  .channel-body {
+    padding: 0 12px 12px;
+  }
+
+  .channel-section {
+    padding: 12px;
+  }
+
+  .channel-meta {
+    display: grid;
+    gap: 5px;
+  }
+
+  .channel-actions .btn,
+  .selector-toolbar .btn {
+    width: 100%;
   }
 }
 

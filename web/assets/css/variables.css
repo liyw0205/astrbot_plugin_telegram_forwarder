@@ -1,39 +1,37 @@
 :root {
-  --blue: #31a8e8;
-  --blue-strong: #1589ca;
-  --blue-soft: #eef9ff;
-  --blue-tint: #dff4ff;
-  --cream: #fffdf8;
-  --cream-soft: #fbf8f0;
-  --ink: #152331;
-  --text: #2e4051;
-  --muted: #7a8c9d;
-  --line: #e8eff4;
-  --panel: rgba(255, 253, 248, 0.72);
-  --border-glow: rgba(49, 168, 232, 0.08);
-  --border-glow-active: rgba(49, 168, 232, 0.22);
-  --bg: #f6fbff;
-  --danger: #e15b64;
-  --success: #21a67a;
-  --soft: #f1f5f9;
-  --shadow: 0 18px 42px rgba(45, 118, 166, 0.11);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --cream: #182533;          /* TG dark panels */
-    --cream-soft: #202b36;     /* TG dark secondary panels */
-    --ink: #ffffff;            /* White text for contrast */
-    --text: #e5edf4;           /* Light blue-gray text */
-    --muted: #708499;          /* Muted telegram steel gray */
-    --line: #101921;           /* Very dark border lines */
-    --panel: rgba(24, 37, 51, 0.78);
-    --border-glow: rgba(49, 168, 232, 0.12);
-    --border-glow-active: rgba(49, 168, 232, 0.32);
-    --bg: #0e1621;             /* TG desktop dark background */
-    --shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
-    --soft: #1e2a38;           /* Neutral secondary background */
-    --blue-soft: rgba(49, 168, 232, 0.12);
-    --blue-tint: rgba(49, 168, 232, 0.22);
-  }
+  color-scheme: dark;
+  --blue: #0ea5e9;
+  --blue-strong: #38bdf8;
+  --blue-soft: rgba(14, 165, 233, 0.12);
+  --blue-tint: rgba(56, 189, 248, 0.2);
+  --lime: #28ff10;
+  --lime-strong: #5cff37;
+  --lime-soft: rgba(40, 255, 16, 0.12);
+  --orange: #f7931a;
+  --orange-soft: rgba(247, 147, 26, 0.14);
+  --violet: #7c3aed;
+  --violet-soft: rgba(124, 58, 237, 0.14);
+  --cream: #111832;
+  --cream-soft: #0c1226;
+  --ink: #f8fafc;
+  --text: #d8e2f4;
+  --muted: #8ea0c0;
+  --line: rgba(148, 163, 184, 0.18);
+  --panel: rgba(17, 24, 50, 0.78);
+  --panel-solid: #111832;
+  --panel-raised: rgba(21, 31, 63, 0.9);
+  --border-glow: rgba(56, 189, 248, 0.16);
+  --border-glow-active: rgba(40, 255, 16, 0.34);
+  --bg: #070b1a;
+  --danger: #ff5f6d;
+  --danger-soft: rgba(255, 95, 109, 0.14);
+  --success: #28ff10;
+  --success-soft: rgba(40, 255, 16, 0.12);
+  --warning: #ffbd2e;
+  --warning-soft: rgba(255, 189, 46, 0.14);
+  --soft: rgba(148, 163, 184, 0.12);
+  --field-bg: rgba(7, 11, 26, 0.54);
+  --shadow: 0 24px 72px rgba(0, 0, 0, 0.42);
+  --shadow-tight: 0 12px 30px rgba(0, 0, 0, 0.28);
+  --focus-ring: 0 0 0 3px rgba(40, 255, 16, 0.14);
 }

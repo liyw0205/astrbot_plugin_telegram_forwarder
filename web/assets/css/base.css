@@ -11,8 +11,14 @@ body {
   margin: 0;
   min-height: 100%;
   color: var(--text);
-  background: var(--bg);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:
+    linear-gradient(rgba(56, 189, 248, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+    linear-gradient(115deg, transparent 0%, rgba(40, 255, 16, 0.055) 54%, transparent 78%),
+    linear-gradient(180deg, #070b1a 0%, #0a1024 52%, #07111f 100%);
+  background-attachment: fixed;
+  background-size: 50px 50px, 50px 50px, 100% 100%, 100% 100%;
+  font-family: "DM Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }
 
@@ -28,6 +34,14 @@ button {
   cursor: pointer;
 }
 
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
 .auth-screen {
   position: fixed;
   inset: 0;
@@ -36,8 +50,11 @@ button {
   place-items: center;
   padding: 24px;
   background:
-    linear-gradient(180deg, rgba(49, 168, 232, 0.12), rgba(255, 253, 248, 0.98) 42%),
-    var(--bg);
+    linear-gradient(rgba(56, 189, 248, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+    linear-gradient(140deg, rgba(40, 255, 16, 0.12), transparent 36%),
+    linear-gradient(180deg, #070b1a, #0a1024 60%, #07111f);
+  background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
 }
 
 .auth-panel {
@@ -45,11 +62,12 @@ button {
   display: grid;
   gap: 18px;
   padding: 30px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border-glow);
   border-radius: 8px;
   background: var(--panel);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(20px);
   box-shadow: var(--shadow);
+  animation: panel-in 0.36s ease both;
 }
 
 .auth-logo,
@@ -57,9 +75,10 @@ button {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: #fff;
-  background: var(--blue);
+  color: #05101f;
+  background: linear-gradient(135deg, var(--blue), var(--lime));
   font-weight: 800;
+  box-shadow: 0 0 0 1px rgba(248, 250, 252, 0.16), 0 12px 28px rgba(40, 255, 16, 0.18);
 }
 
 .auth-logo {
@@ -81,6 +100,7 @@ button {
 .step-card h3 {
   color: var(--ink);
   letter-spacing: 0;
+  font-family: "Space Grotesk", "DM Sans", Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 .auth-panel h1 {
@@ -97,7 +117,7 @@ button {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 276px 1fr;
+  grid-template-columns: 264px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -109,8 +129,10 @@ button {
   flex-direction: column;
   padding: 18px 14px;
   border-right: 1px solid var(--line);
-  background: var(--panel);
-  backdrop-filter: blur(18px);
+  background:
+    linear-gradient(180deg, rgba(17, 24, 50, 0.94), rgba(7, 11, 26, 0.88)),
+    var(--panel-solid);
+  backdrop-filter: blur(22px);
   transition: background 0.3s ease, border-color 0.3s ease;
 }
 
@@ -148,17 +170,19 @@ button {
   background: transparent;
   text-align: left;
   font-weight: 700;
-  transition: background 0.3s ease, color 0.3s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .nav-item:hover {
-  color: var(--blue-strong);
-  background: var(--blue-soft);
+  color: var(--ink);
+  background: rgba(56, 189, 248, 0.1);
+  transform: translateX(2px);
 }
 
 .nav-item.active {
-  color: #fff;
-  background: var(--blue);
+  color: #06101f;
+  background: linear-gradient(135deg, var(--lime), #14d4ff);
+  box-shadow: 0 12px 30px rgba(40, 255, 16, 0.18);
 }
 
 .sidebar-exit {
@@ -166,8 +190,11 @@ button {
 }
 
 .content {
+  width: min(100%, 1240px);
   min-width: 0;
-  padding: 28px;
+  margin: 0 auto;
+  padding: 28px clamp(18px, 3vw, 34px) 56px;
+  animation: content-in 0.28s ease both;
 }
 
 .topbar {
@@ -175,7 +202,7 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 22px;
+  margin-bottom: 20px;
 }
 
 .topbar h1 {
@@ -186,10 +213,11 @@ button {
 
 .eyebrow {
   margin: 0;
-  color: var(--blue-strong);
+  color: var(--lime);
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .topbar-actions,
@@ -201,13 +229,12 @@ button {
   gap: 10px;
 }
 
-@media (max-width: 1120px) {
-  .status-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.mobile-menu,
+.sidebar-scrim {
+  display: none;
 }
 
-@media (max-width: 820px) {
+@media (max-width: 960px) {
   .app-shell {
     display: block;
   }
@@ -244,14 +271,14 @@ button {
   .mobile-menu {
     position: fixed;
     left: 14px;
-    top: 14px;
+    top: calc(14px + env(safe-area-inset-top));
     z-index: 70;
     width: 46px;
     height: 46px;
     display: grid;
     place-items: center;
     border-radius: 50%;
-    background: var(--blue);
+    background: linear-gradient(135deg, var(--blue), var(--lime));
     box-shadow: var(--shadow);
   }
 
@@ -268,27 +295,45 @@ button {
     width: 21px;
     height: 2px;
     border-radius: 99px;
-    background: #fff;
+    background: #05101f;
   }
 
   .content {
-    padding: 76px 14px 96px;
+    width: 100%;
+    padding: calc(76px + env(safe-area-inset-top)) 14px calc(108px + env(safe-area-inset-bottom));
   }
 
   .topbar {
     display: grid;
+    gap: 12px;
+    min-height: 46px;
+    padding-left: 56px;
   }
 
   .topbar-actions {
-    position: fixed;
-    right: 14px;
-    bottom: 18px;
-    z-index: 70;
+    width: calc(100% + 56px);
+    margin-left: -56px;
     padding: 8px;
     border: 1px solid var(--line);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.95);
+    border-radius: 8px;
+    background: rgba(17, 24, 50, 0.94);
+    backdrop-filter: blur(18px);
     box-shadow: var(--shadow);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .topbar-actions[data-actions="refresh"],
+  .topbar-actions[data-actions="save"] {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-actions[data-actions="refresh"] {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
   }
 
   .topbar-actions .btn {
@@ -297,9 +342,39 @@ button {
   }
 
   .form-grid,
-  .settings-grid,
-  .status-grid {
+  .settings-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@keyframes content-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
   }
 }
 
@@ -307,6 +382,10 @@ button {
   .auth-panel,
   .panel {
     padding: 16px;
+  }
+
+  .topbar h1 {
+    font-size: 26px;
   }
 
   .panel-head {

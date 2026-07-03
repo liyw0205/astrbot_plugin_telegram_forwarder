@@ -15,9 +15,9 @@ import {
 } from './js/context.js';
 import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
-import { initChannels, collectChannels, collectMergeRules, renderChannels, renderMergeRules } from './js/ui_channels.js';
-import { renderQQTargetSelector, splitList, joinList } from './js/ui_selector.js';
-import { escapeHtml } from './js/utils.js';
+import { initChannels, collectChannels, collectMergeRules, defaultChannel, renderChannels, renderMergeRules } from './js/ui_channels.js';
+import { renderQQTargetSelector, splitList, joinList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './js/ui_selector.js';
+import { escapeHtml, channelKey } from './js/utils.js';
 
 export const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
 export const TRI_STATE = ["继承全局", "开启", "关闭"];
@@ -154,6 +154,7 @@ function cacheElements() {
     "targetChannelInput",
     "defaultQQSelector",
     "targetQQInput",
+    "targetTopology",
     "resetDefaultQQBtn",
     "debugDefaultInput",
     "addChannelBtn",
@@ -192,6 +193,346 @@ function currentWebConfig() {
   return { ...DEFAULT_WEB_CONFIG, ...(store.state.config?.web_config || {}) };
 }
 
+function normalizeChannelRef(value) {
+  return String(value || "").trim().replace(/^[@#]/, "");
+}
+
+function targetLabel(target) {
+  const group = groupByTarget(target);
+  if (group) {
+    return `${group.group_name || `群 ${group.group_id}`} (${group.group_id})`;
+  }
+  const groupId = groupIdFromTarget(target);
+  return groupId ? `QQ群 ${groupId}` : String(target || "未命名 QQ 目标");
+}
+
+function queueCountForChannel(channel) {
+  const ref = normalizeChannelRef(channel?.channel_username || "");
+  if (!ref) return 0;
+  const queueByChannel = store.state.status?.queue?.by_channel || {};
+  const candidates = new Set([ref, `@${ref}`, channelTitleUI(ref)]);
+  return Object.entries(queueByChannel).reduce((total, [key, count]) => {
+    const normalized = normalizeChannelRef(key);
+    if (candidates.has(key) || normalized === ref) {
+      return total + (Number.parseInt(count, 10) || 0);
+    }
+    return total;
+  }, 0);
+}
+
+const TOPOLOGY_ROW_HEIGHT = 74;
+const TOPOLOGY_TOP_PADDING = 70;
+const TOPOLOGY_BOTTOM_PADDING = 70;
+
+function topologyY(index) {
+  return TOPOLOGY_TOP_PADDING + index * TOPOLOGY_ROW_HEIGHT;
+}
+
+function topologyNode(label, meta, side, index, attrs = "") {
+  const y = topologyY(index);
+  return `
+    <button class="topology-node topology-node-${side}" style="--topology-y: ${y}px" type="button" ${attrs}>
+      <strong>${escapeHtml(label)}</strong>
+      <span>${escapeHtml(meta)}</span>
+    </button>
+  `;
+}
+
+function topologyDragData(type, value) {
+  return escapeHtml(JSON.stringify({ type, value }));
+}
+
+function configuredChannelRefs() {
+  const channels = Array.isArray(store.state.config?.source_channels) ? store.state.config.source_channels : [];
+  return new Set(channels.map((channel) => normalizeChannelRef(channel?.channel_username)).filter(Boolean));
+}
+
+function addTopologyChannel(ref) {
+  const channelRef = normalizeChannelRef(ref);
+  if (!channelRef) return;
+  if (!store.state.config) store.state.config = {};
+  if (!Array.isArray(store.state.config.source_channels)) store.state.config.source_channels = [];
+  if (configuredChannelRefs().has(channelRef)) {
+    showToast("该频道已经在转发配置中。");
+    return;
+  }
+  const channel = { ...defaultChannel(), channel_username: channelRef };
+  store.state.config.source_channels.push(channel);
+  store.state.expandedChannels.add(channelKey(channel, store.state.config.source_channels.length - 1));
+  renderTargetTopology();
+  showToast("频道已加入转发拓扑，保存后生效。");
+}
+
+function connectTopologyTarget(channelIndex, target) {
+  const targetValue = String(target || "").trim();
+  if (!targetValue) return;
+  const channels = store.state.config?.source_channels;
+  if (!Array.isArray(channels) || !channels[channelIndex]) return;
+  const current = uniqueList(splitList(channels[channelIndex].target_qq_sessions || []));
+  const inherited = uniqueList(splitList(store.state.config?.target_qq_session || []));
+  const baseTargets = current.length ? current : inherited;
+  if (baseTargets.includes(targetValue)) {
+    showToast("该频道已经连接到这个 QQ 群。");
+    return;
+  }
+  channels[channelIndex].target_qq_sessions = [...baseTargets, targetValue];
+  renderTargetTopology();
+  showToast("已为频道添加专属 QQ 目标，保存后生效。");
+}
+
+function openTopologyChannel(channelIndex) {
+  const channel = store.state.config?.source_channels?.[channelIndex];
+  if (!channel) return;
+  const key = channelKey(channel, channelIndex);
+  store.state.expandedChannels.add(key);
+  store.state.channelGroups[key] = "targets";
+  renderChannels();
+  setSection("channels");
+  window.requestAnimationFrame(() => {
+    document.querySelector(`[data-channel-index="${channelIndex}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+}
+
+function bindTargetTopologyInteractions() {
+  if (!els.targetTopology) return;
+  els.targetTopology.querySelectorAll("[data-drag-payload]").forEach((node) => {
+    node.addEventListener("dragstart", (event) => {
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("application/json", node.dataset.dragPayload || "");
+    });
+  });
+
+  els.targetTopology.querySelectorAll("[data-topology-add-channel]").forEach((node) => {
+    node.addEventListener("click", () => addTopologyChannel(node.dataset.topologyAddChannel));
+  });
+
+  els.targetTopology.querySelectorAll("[data-topology-channel]").forEach((node) => {
+    const index = Number.parseInt(node.dataset.topologyChannel, 10);
+    node.addEventListener("click", () => openTopologyChannel(index));
+    node.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      node.classList.add("drop-ready");
+    });
+    node.addEventListener("dragleave", () => node.classList.remove("drop-ready"));
+    node.addEventListener("drop", (event) => {
+      event.preventDefault();
+      node.classList.remove("drop-ready");
+      try {
+        const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
+        if (payload.type === "qq") connectTopologyTarget(index, payload.value);
+      } catch {
+        showToast("拖拽数据无效。");
+      }
+    });
+  });
+
+  const stage = els.targetTopology.querySelector("[data-topology-drop-stage]");
+  if (stage) {
+    stage.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      stage.classList.add("drop-ready");
+    });
+    stage.addEventListener("dragleave", () => stage.classList.remove("drop-ready"));
+    stage.addEventListener("drop", (event) => {
+      event.preventDefault();
+      stage.classList.remove("drop-ready");
+      try {
+        const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
+        if (payload.type === "tg") addTopologyChannel(payload.value);
+      } catch {
+        showToast("拖拽数据无效。");
+      }
+    });
+  }
+}
+
+function captureTopologyScroll() {
+  if (!els.targetTopology) return {};
+  const scrollState = {};
+  els.targetTopology.querySelectorAll("[data-topology-scroll]").forEach((node) => {
+    scrollState[node.dataset.topologyScroll] = {
+      left: node.scrollLeft,
+      top: node.scrollTop,
+    };
+  });
+  return scrollState;
+}
+
+function restoreTopologyScroll(scrollState) {
+  if (!els.targetTopology || !scrollState) return;
+  els.targetTopology.querySelectorAll("[data-topology-scroll]").forEach((node) => {
+    const state = scrollState[node.dataset.topologyScroll];
+    if (!state) return;
+    node.scrollLeft = state.left;
+    node.scrollTop = state.top;
+  });
+}
+
+export function renderTargetTopology() {
+  if (!els.targetTopology) return;
+  const scrollState = captureTopologyScroll();
+  const cfg = store.state.config || {};
+  const channels = Array.isArray(cfg.source_channels) ? cfg.source_channels : [];
+  const defaultTargets = uniqueList(splitList(cfg.target_qq_session || []));
+  const sourceItems = channels
+    .map((channel, index) => {
+      const username = normalizeChannelRef(channel?.channel_username || "");
+      const dedicatedTargets = uniqueList(splitList(channel?.target_qq_sessions || []));
+      const targets = dedicatedTargets.length ? dedicatedTargets : defaultTargets;
+      const pendingCount = queueCountForChannel(channel);
+      return {
+        id: `source-${index}`,
+        index,
+        label: username ? channelTitleUI(username) : `频道 ${index + 1}`,
+        meta: pendingCount > 0
+          ? `${pendingCount} 条待转发`
+          : dedicatedTargets.length ? "专属 QQ 目标" : targets.length ? "继承默认 QQ 目标" : "未连接 QQ 群",
+        targets,
+        dedicated: dedicatedTargets.length > 0,
+        active: pendingCount > 0,
+      };
+    })
+    .filter((item) => item.label || item.targets.length);
+
+  const targetItems = [];
+  const targetIndex = new Map();
+  sourceItems.forEach((source) => {
+    source.targets.forEach((target) => {
+      const key = String(target || "").trim();
+      if (!key || targetIndex.has(key)) return;
+      targetIndex.set(key, targetItems.length);
+      targetItems.push({
+        id: `target-${targetItems.length}`,
+        key,
+        label: targetLabel(key),
+        meta: groupByTarget(key)?.source || "configured",
+      });
+    });
+  });
+
+  const configuredRefs = configuredChannelRefs();
+  const availableChannels = store.state.tgChannels
+    .filter((channel) => {
+      const ref = normalizeChannelRef(channel.channel_ref || channel.username);
+      return ref && !configuredRefs.has(ref);
+    });
+  const availableGroups = store.state.qqGroups;
+  const palette = `
+    <div class="topology-palette">
+      <div>
+        <strong>可拖入频道 <span>${availableChannels.length}</span></strong>
+        <div class="topology-chip-row" data-topology-scroll="channels">
+          ${
+            availableChannels.length
+              ? availableChannels.map((channel) => {
+                  const ref = normalizeChannelRef(channel.channel_ref || channel.username);
+                  const label = channel.title || channel.username || ref;
+                  return `<button class="topology-chip" type="button" draggable="true" data-topology-add-channel="${escapeHtml(ref)}" data-drag-payload="${topologyDragData("tg", ref)}">${escapeHtml(label)}</button>`;
+                }).join("")
+              : '<span class="topology-palette-empty">没有可拖入的 Telegram 频道</span>'
+          }
+        </div>
+      </div>
+      <div>
+        <strong>可拖入 QQ 群 <span>${availableGroups.length}</span></strong>
+        <div class="topology-chip-row" data-topology-scroll="groups">
+          ${
+            availableGroups.length
+              ? availableGroups.map((group) => {
+                  const target = String(group.session || `default:GroupMessage:${group.group_id || ""}`).trim();
+                  const label = group.group_name || `群 ${group.group_id}`;
+                  return `<span class="topology-chip topology-chip-target" draggable="true" data-drag-payload="${topologyDragData("qq", target)}">${escapeHtml(label)}</span>`;
+                }).join("")
+              : '<span class="topology-palette-empty">没有可拖入的 QQ 群</span>'
+          }
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (!sourceItems.length) {
+    els.targetTopology.innerHTML = `
+      ${palette}
+      <div class="topology-empty" data-topology-drop-stage>还没有配置源频道。把上方 Telegram 频道拖到这里开始配置。</div>
+    `;
+    bindTargetTopologyInteractions();
+    restoreTopologyScroll(scrollState);
+    return;
+  }
+
+  const rowCount = Math.max(sourceItems.length, targetItems.length, 2);
+  const stageHeight = TOPOLOGY_TOP_PADDING + (rowCount - 1) * TOPOLOGY_ROW_HEIGHT + TOPOLOGY_BOTTOM_PADDING;
+  const sourceNodes = sourceItems
+    .map((source, index) =>
+      topologyNode(
+        source.label,
+        source.meta,
+        `source ${source.active ? "active" : ""}`,
+        index,
+        `data-topology-channel="${source.index}"`,
+      ),
+    )
+    .join("");
+  const targetNodes = targetItems.length
+    ? targetItems.map((target, index) =>
+        topologyNode(
+        target.label,
+        target.meta,
+        "target",
+        index,
+        `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"`,
+      ),
+    ).join("")
+    : '<div class="topology-empty topology-empty-target">未选择 QQ 群目标</div>';
+
+  const edges = sourceItems
+    .flatMap((source, sourceIndex) =>
+      source.targets.map((target) => {
+        const targetPosition = targetIndex.get(String(target || "").trim());
+        if (targetPosition == null) return "";
+        const y1 = topologyY(sourceIndex);
+        const y2 = topologyY(targetPosition);
+        return `<path class="${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
+      }),
+    )
+    .join("");
+
+  const mobileRows = sourceItems
+    .map((source) => {
+      const chips = source.targets.length
+        ? source.targets.map((target) => `<span>${escapeHtml(targetLabel(target))}</span>`).join("")
+        : '<em>未连接 QQ 群</em>';
+      return `
+        <div class="topology-mobile-row">
+          <button type="button" data-topology-channel="${source.index}">${escapeHtml(source.label)}</button>
+          <div>${chips}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  els.targetTopology.innerHTML = `
+    ${palette}
+    <div class="topology-canvas" data-topology-scroll="canvas">
+      <div class="topology-stage" data-topology-drop-stage style="--topology-height: ${stageHeight}px">
+        <svg class="topology-lines" viewBox="0 0 100 ${stageHeight}" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <marker id="topology-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+              <path d="M 0 0 L 8 4 L 0 8 z" />
+            </marker>
+          </defs>
+          ${edges}
+        </svg>
+        ${sourceNodes}
+        ${targetNodes}
+      </div>
+    </div>
+    <div class="topology-mobile-list">${mobileRows}</div>
+  `;
+  bindTargetTopologyInteractions();
+  restoreTopologyScroll(scrollState);
+}
+
 export function renderRootConfig() {
   const cfg = store.state.config || {};
   if (els.apiIdInput) els.apiIdInput.value = cfg.api_id || "";
@@ -206,6 +547,7 @@ export function renderRootConfig() {
     manualInput: els.targetQQInput,
     inheritLabel: "未配置默认 QQ 目标",
   });
+  renderTargetTopology();
   if (els.debugDefaultInput) els.debugDefaultInput.checked = Boolean(cfg.debug_enabled_default);
 
   const web = currentWebConfig();
@@ -466,7 +808,9 @@ export function updateTopbarActions() {
   if (els.refreshBtn) els.refreshBtn.hidden = !showRefresh;
   if (els.saveBtn) els.saveBtn.hidden = !showSave;
   if (els.refreshBtn?.parentElement) {
-    els.refreshBtn.parentElement.hidden = !showRefresh && !showSave;
+    const parent = els.refreshBtn.parentElement;
+    parent.hidden = !showRefresh && !showSave;
+    parent.dataset.actions = showRefresh && showSave ? "both" : showRefresh ? "refresh" : showSave ? "save" : "none";
   }
 }
 
@@ -501,6 +845,12 @@ function bindMainEvents() {
       store.state.config.target_qq_session = [];
       renderRootConfig();
       showToast("默认 QQ 目标已清空，保存后生效。");
+    });
+  }
+  if (els.targetQQInput) {
+    els.targetQQInput.addEventListener("change", () => {
+      collectRootConfig();
+      renderTargetTopology();
     });
   }
 
@@ -545,6 +895,7 @@ async function boot() {
         manualInput: els.targetQQInput,
         inheritLabel: "未配置默认 QQ 目标",
       });
+      renderTargetTopology();
     }
   });
 
@@ -555,7 +906,7 @@ async function boot() {
   
   // Bind events for entrypoint page
   bindMainEvents();
-  document.querySelectorAll(".metric-card, .bento-grid > .panel").forEach(bindCardPhysics);
+  document.querySelectorAll(".metric-card, .overview-main > .panel").forEach(bindCardPhysics);
 
   if (els.tokenInput) els.tokenInput.value = store.state.token || "";
   if (!store.state.token) return;
