@@ -1196,6 +1196,10 @@ select {
 
 .topology-stage {
   position: relative;
+  /* 节点卡片几何的唯一定义处：.topology-lines 的左右边界由此推导，
+     改卡片宽度/边距时连线端点自动跟随，避免再出现连线穿透卡片 */
+  --topology-node-width: min(30%, 270px);
+  --topology-node-inset: 18px;
   width: 100%;
   min-width: 0;
   height: var(--topology-height);
@@ -1237,9 +1241,13 @@ select {
 
 .topology-lines {
   position: absolute;
-  inset: 0;
-  width: 100%;
+  top: 0;
   height: 100%;
+  /* SVG 只铺在左右两列卡片之间的夹缝：viewBox x 轴 0→100 恰好对应
+     左卡片右边缘→右卡片左边缘，任意容器宽度下连线都精确贴合卡片 */
+  left: calc(var(--topology-node-inset) + var(--topology-node-width));
+  width: calc(100% - 2 * (var(--topology-node-inset) + var(--topology-node-width)));
+  overflow: visible;
   pointer-events: none;
 }
 
@@ -1284,7 +1292,7 @@ select {
   position: absolute;
   top: var(--topology-y);
   z-index: 1;
-  width: min(30%, 270px);
+  width: var(--topology-node-width);
   min-height: 54px;
   display: grid;
   align-content: center;
@@ -1301,7 +1309,7 @@ select {
 }
 
 .topology-node-source {
-  left: 18px;
+  left: var(--topology-node-inset);
 }
 
 .topology-node-source:hover,
@@ -1330,7 +1338,7 @@ select {
 }
 
 .topology-node-target {
-  right: 18px;
+  right: var(--topology-node-inset);
   border-color: var(--border-glow-active);
   background: var(--primary-soft);
 }
@@ -1382,8 +1390,8 @@ select {
 .topology-empty-target {
   position: absolute;
   top: var(--topology-y, 70px);
-  right: 18px;
-  width: min(30%, 270px);
+  right: var(--topology-node-inset);
+  width: var(--topology-node-width);
   min-height: 54px;
   transform: translateY(-50%);
 }

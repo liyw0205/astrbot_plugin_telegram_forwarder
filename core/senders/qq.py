@@ -30,10 +30,7 @@ from .qq_batch_builder import (
 )
 from .qq_circuit import record_target_failure, record_target_success, target_is_open
 from .qq_dispatcher import dispatch_processed_batches_to_targets, send_processed_batch
-from .qq_file_fallback import (
-    handle_apk_file_send_failure,
-    resolve_apk_fallback_policy,
-)
+from .qq_file_fallback import handle_file_send_failure, resolve_apk_fallback_policy
 from .qq_log_policy import QQLogPolicy
 from .qq_media import (
     File,
@@ -85,6 +82,7 @@ MEDIA_SEND_KINDS = {
     "audio_file",
     "video_file",
     "special_media",
+    "fallback_file_source",
     "fallback_zip",
 }
 
@@ -287,8 +285,10 @@ class QQSender:
         unified_msg_origin: str,
         target_session: str,
     ) -> bool:
-        return await handle_apk_file_send_failure(
-            policy=resolve_apk_fallback_policy(self.config.get("forward_config", {})),
+        forward_cfg = self.config.get("forward_config", {})
+        return await handle_file_send_failure(
+            forward_cfg=forward_cfg,
+            apk_policy=resolve_apk_fallback_policy(forward_cfg),
             component=component,
             error=error,
             batch_data=batch_data,

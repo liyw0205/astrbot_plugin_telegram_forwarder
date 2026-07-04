@@ -322,6 +322,12 @@
                 "default": "",
                 "hint": "仅在直链关联模式下生效。插件会把文件名拼接到该基址后，例如 https://files.example.com/downloads/"
             },
+            "file_direct_link_base_url": {
+                "description": "普通文件直链基址",
+                "type": "string",
+                "default": "",
+                "hint": "当非 APK 文件被 QQ 富媒体上传拒收时，插件会优先把文件名拼接到该公网基址后改发直链；留空则尝试源文件路径兜底。"
+            },
             "check_interval": {
                 "description": "检测间隔(秒)",
                 "type": "int",

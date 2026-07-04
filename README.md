@@ -231,6 +231,7 @@ https://api.ipify.org
 * **exclude_text_on_media**: 开启后，包含媒体的消息将不再发送文本内容（包含 From 头部）。
 * **apk_fallback_mode**: 当 QQ 发送 `.apk/.xapk/.apkm/.apks` 返回 `rich media transfer failed` 时的降级策略：`关闭` / `直链` / `压缩包` / `直链优先，失败转压缩包`
 * **apk_direct_link_base_url**: 直链降级使用的公网下载基地址，例如 `https://files.example.com/downloads/`。请确保外部可访问，且生成的文件 URL 可被 QQ 客户端打开。
+* **file_direct_link_base_url**: 非 APK 普通文件发送失败时的直链基地址，例如 `.zip` 被 QQ 富媒体上传拒收后会优先改发 `基地址 + 文件名`；留空则尝试用 AstrBot 可读的源文件路径重发一次。
 * **filter_spoiler_messages**: 过滤 Telegram 遮罩/剧透消息（文本剧透实体与媒体剧透标记）。
 * **strip_markdown_links**: 开启后，[文本](链接) 只保留「文本」，链接部分被完全丢弃
 * **batch_size_limit**: 每次转发执行时，单次处理的消息批次上限。

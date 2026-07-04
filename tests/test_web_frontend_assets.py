@@ -24,8 +24,8 @@ def test_dashboard_plugin_page_skips_legacy_token_auth() -> None:
     assert 'id="authForm"' not in text
     assert 'id="tokenInput"' not in text
     assert "访问 Token" not in text.split('id="appShell"', 1)[0]
-    assert 'href="./assets/style.css?v=20260704-topology-fit"' in text
-    assert 'src="./assets/app.js?v=20260704-topology-fit"' in text
+    assert 'href="./assets/style.css?v=20260704-topology-align"' in text
+    assert 'src="./assets/app.js?v=20260704-topology-align"' in text
     assert 'href="/assets/style.css"' not in text
     assert 'src="/assets/app.js"' not in text
 
@@ -34,7 +34,7 @@ def test_dashboard_plugin_page_loads_bridge_before_app() -> None:
     text = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
 
     bridge_pos = text.index('src="/api/plugin/page/bridge-sdk.js"')
-    app_pos = text.index('src="./assets/app.js?v=20260704-topology-fit"')
+    app_pos = text.index('src="./assets/app.js?v=20260704-topology-align"')
     assert bridge_pos < app_pos
 
 
@@ -165,6 +165,37 @@ def test_editable_topology_canvas_expands_to_content_height() -> None:
         body = match.group("body")
         assert "max-height: none;" in body
         assert "overflow: hidden;" in body
+
+
+def test_topology_edges_align_with_node_cards_at_any_width() -> None:
+    css_files = [
+        WEB_ASSETS / "css" / "components.css",
+        PAGE_ASSETS / "css" / "components.css",
+        PAGE_ASSETS / "style.css",
+    ]
+
+    for css_file in css_files:
+        text = css_file.read_text(encoding="utf-8")
+        stage = re.search(r"\.topology-stage\s*\{(?P<body>[^}]+)\}", text)
+        assert stage, f"{css_file.relative_to(ROOT)} missing .topology-stage rule"
+        assert "--topology-node-width:" in stage.group("body")
+        assert "--topology-node-inset:" in stage.group("body")
+
+        lines = re.search(r"\.topology-lines\s*\{(?P<body>[^}]+)\}", text)
+        assert lines, f"{css_file.relative_to(ROOT)} missing .topology-lines rule"
+        body = lines.group("body")
+        assert "left: calc(var(--topology-node-inset) + var(--topology-node-width));" in body
+        assert "width: calc(100% - 2 * (var(--topology-node-inset) + var(--topology-node-width)));" in body
+        assert "overflow: visible;" in body
+
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "app.js").read_text(encoding="utf-8")
+        # SVG 画布已被 CSS 夹在两列卡片之间，x 轴 0→100 必须画满全幅才能贴合卡片边缘
+        assert "d=\"M 0 ${y1} C 35 ${y1}, 65 ${y2}, 100 ${y2}\"" in text
+        assert 'd="M 28' not in text
+        # refX=8 让箭头尖端恰好落在路径终点（右侧卡片左边缘），不再刺入卡片
+        assert 'refX="8"' in text
+        assert 'refX="6"' not in text
 
 
 def test_legacy_web_relative_module_imports_resolve() -> None:

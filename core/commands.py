@@ -904,6 +904,7 @@ class PluginCommands:
                     "APK 发送失败兜底模式（关闭/直链/压缩包/直链优先失败转压缩包）",
                 ),
                 ("apk_direct_link_base_url", "APK 直链基址（仅在直链模式下生效）"),
+                ("file_direct_link_base_url", "普通文件直链基址（非 APK 文件上传失败时生效）"),
                 (
                     "exclude_text_on_media",
                     "媒体消息是否只发媒体不带文字（true/false/开启/关闭）",
@@ -1095,6 +1096,7 @@ class PluginCommands:
                 "max_file_size": float,
                 "apk_fallback_mode": str,
                 "apk_direct_link_base_url": str,
+                "file_direct_link_base_url": str,
                 "exclude_text_on_media": lambda v: (
                     v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
                 ),
@@ -1402,6 +1404,7 @@ class PluginCommands:
             "max_file_size": float,
             "apk_fallback_mode": str,
             "apk_direct_link_base_url": str,
+            "file_direct_link_base_url": str,
             "start_time": str,
             "curfew_time": str,
             "filter_regex": str,

@@ -1027,6 +1027,98 @@ class TestAudioBatchSending:
         assert getattr(sent_file, "name", None) != "None"
 
     @pytest.mark.asyncio
+    async def test_zip_file_send_failure_falls_back_to_source_file_path(
+        self, sender, qq_module
+    ):
+        root = Path(__file__).resolve().parents[1] / ".pytest_tmp"
+        root.mkdir(exist_ok=True)
+        plugin_data_dir = root / f"zip-source-fallback-{uuid.uuid4().hex}"
+        plugin_data_dir.mkdir()
+        zip_path = plugin_data_dir / "pixiv-ranking.zip"
+        zip_path.write_bytes(b"zip-binary")
+
+        sender.config = {"forward_config": {}}
+        sender.context.send_message = AsyncMock(
+            side_effect=[
+                RuntimeError("retcode=1200 rich media transfer failed"),
+                None,
+            ]
+        )
+        file_component = qq_module.File(
+            file="/plugin_data/astrbot_plugin_telegram_forwarder/pixiv-ranking.zip",
+            name="pixiv-ranking.zip",
+        )
+        file_component.file_ = (
+            "/plugin_data/astrbot_plugin_telegram_forwarder/pixiv-ranking.zip"
+        )
+        file_component.url = ""
+        file_component._tgf_source_path = str(zip_path)
+
+        try:
+            await sender._send_processed_batch(
+                batch_data={
+                    "nodes_data": [[file_component]],
+                    "local_files": [str(zip_path)],
+                    "contains_audio": False,
+                },
+                unified_msg_origin="target",
+                self_id=1,
+                node_name="bot",
+                target_session="target",
+            )
+
+            assert sender.context.send_message.await_count == 2
+            fallback_component = (
+                sender.context.send_message.await_args_list[1].args[1].chain[0]
+            )
+            assert type(fallback_component).__name__ == "File"
+            assert fallback_component.name == "pixiv-ranking.zip"
+            assert fallback_component.file == str(zip_path)
+        finally:
+            shutil.rmtree(plugin_data_dir, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_non_apk_file_send_failure_falls_back_to_direct_link(
+        self, sender, qq_module
+    ):
+        sender.config = {
+            "forward_config": {
+                "file_direct_link_base_url": "https://files.example.com/downloads",
+            }
+        }
+        sender.context.send_message = AsyncMock(
+            side_effect=[
+                RuntimeError("retcode=1200 rich media transfer failed"),
+                None,
+            ]
+        )
+        file_component = qq_module.File(
+            file="/plugin_data/astrbot_plugin_telegram_forwarder/report.zip",
+            name="report.zip",
+        )
+        file_component.file_ = "/plugin_data/astrbot_plugin_telegram_forwarder/report.zip"
+        file_component.url = ""
+        file_component._tgf_source_path = "/tmp/report.zip"
+
+        await sender._send_processed_batch(
+            batch_data={
+                "nodes_data": [[file_component]],
+                "local_files": [],
+                "contains_audio": False,
+            },
+            unified_msg_origin="target",
+            self_id=1,
+            node_name="bot",
+            target_session="target",
+        )
+
+        assert sender.context.send_message.await_count == 2
+        fallback_chain = sender.context.send_message.await_args_list[1].args[1].chain
+        assert len(fallback_chain) == 1
+        assert type(fallback_chain[0]).__name__ == "Plain"
+        assert "https://files.example.com/downloads/report.zip" in fallback_chain[0].text
+
+    @pytest.mark.asyncio
     async def test_file_send_overrides_to_dict_for_nonexistent_mapped_path(
         self, sender, qq_module
     ):

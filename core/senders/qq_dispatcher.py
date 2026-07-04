@@ -504,6 +504,14 @@ async def send_processed_batch(
         except OSError:
             return None
 
+    def safe_file_exists(path: str | None) -> bool | None:
+        if not path:
+            return None
+        try:
+            return Path(path).is_file()
+        except OSError:
+            return False
+
     all_nodes_data = batch_data["nodes_data"]
     if allow_forward_nodes and should_merge(batch_data):
         message_chain = MessageChain()
@@ -675,6 +683,8 @@ async def send_processed_batch(
                             f"url={getattr(c, 'url', None)!r}, "
                             f"name={getattr(c, 'name', None)!r}, "
                             f"source_path={getattr(c, '_tgf_source_path', getattr(c, 'path', None))!r}, "
+                            f"source_exists={safe_file_exists(getattr(c, '_tgf_source_path', getattr(c, 'path', None)))}, "
+                            f"source_size={safe_file_size(getattr(c, '_tgf_source_path', getattr(c, 'path', None)))}, "
                             f"error_type={type(send_error).__name__}, error={send_error!r}"
                         )
                         if (
