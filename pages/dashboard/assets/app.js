@@ -1243,16 +1243,62 @@ export function renderRootConfig() {
 
 export function renderForwardTabs() {
   if (!els.forwardTabs) return;
-  els.forwardTabs.innerHTML = FORWARD_GROUPS.map(
+  els.forwardTabs.classList.add("has-indicator");
+  
+  const buttonsHtml = FORWARD_GROUPS.map(
     (group) =>
       `<button type="button" data-forward-tab="${group.id}" class="${store.state.forwardGroup === group.id ? "active" : ""}">${escapeHtml(group.label)}</button>`,
   ).join("");
-  document.querySelectorAll("[data-forward-tab]").forEach((button) => {
+
+  els.forwardTabs.innerHTML = `
+    <div class="segmented-indicator" id="forwardTabIndicator"></div>
+    ${buttonsHtml}
+  `;
+
+  els.forwardTabs.querySelectorAll("[data-forward-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       collectForwardConfig();
       store.updateState({ forwardGroup: button.dataset.forwardTab });
       renderForwardTabs();
       renderForwardConfig();
+    });
+  });
+
+  syncForwardTabIndicator();
+}
+
+function syncForwardTabIndicator() {
+  if (!els.forwardTabs) return;
+  const activeBtn = els.forwardTabs.querySelector("button.active");
+  const indicator = els.forwardTabs.querySelector("#forwardTabIndicator");
+  if (!activeBtn || !indicator) return;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (!activeBtn.isConnected || !indicator.isConnected) return;
+      const targetLeft = activeBtn.offsetLeft;
+      const targetWidth = activeBtn.offsetWidth;
+      if (!targetWidth) return; // Layout not resolved yet
+
+      if (window.gsap && motionEnabled()) {
+        const isFirstTime = !indicator.style.width || indicator.style.width === "0px";
+        if (isFirstTime) {
+          window.gsap.set(indicator, {
+            left: targetLeft,
+            width: targetWidth
+          });
+        } else {
+          window.gsap.to(indicator, {
+            left: targetLeft,
+            width: targetWidth,
+            duration: 0.3,
+            ease: "power2.out"
+          });
+        }
+      } else {
+        indicator.style.left = `${targetLeft}px`;
+        indicator.style.width = `${targetWidth}px`;
+      }
     });
   });
 }
@@ -1327,6 +1373,18 @@ export function renderForwardConfig() {
   els.forwardConfigForm.innerHTML = group.fields
     .map((field) => renderField(field, cfg[field.key] ?? field.defaultValue, "data-forward"))
     .join("");
+
+  // Staggered cascade entrance animation for config cards
+  if (window.gsap && motionEnabled()) {
+    const cards = els.forwardConfigForm.querySelectorAll(".settings-card");
+    if (cards.length) {
+      window.gsap.killTweensOf(cards);
+      window.gsap.fromTo(cards,
+        { opacity: 0, y: 15 },
+        { opacity: 1, y: 0, duration: 0.35, stagger: 0.04, ease: "power2.out" }
+      );
+    }
+  }
 }
 
 export function renderRawConfig() {

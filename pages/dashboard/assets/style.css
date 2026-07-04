@@ -1574,14 +1574,18 @@ select {
 }
 
 .panel .settings-card {
-  background: var(--inset-soft);
-  box-shadow: none;
+  background: var(--surface);
+  border: 1px solid rgba(34, 158, 217, 0.08);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.015);
+  border-radius: 12px;
+  padding: 16px 20px;
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s ease, box-shadow 0.22s ease;
 }
 
 .panel .settings-card:hover {
-  border-color: var(--line);
-  box-shadow: none;
-  transform: none;
+  border-color: var(--border-glow-active);
+  box-shadow: var(--shadow-tight);
+  transform: translateY(-2px);
 }
 
 .settings-card.wide {
@@ -1767,24 +1771,40 @@ select:focus {
 }
 
 .segmented {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   padding: 5px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--inset-soft);
 }
 
+.segmented-indicator {
+  position: absolute;
+  top: 5px;
+  height: 34px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  box-shadow: 0 6px 16px rgba(34, 158, 217, 0.2);
+  pointer-events: none;
+  z-index: 1;
+  width: 0;
+  left: 0;
+}
+
 .segmented button {
+  position: relative;
+  z-index: 2;
   min-height: 34px;
   border-radius: 8px;
-  padding: 0 12px;
+  padding: 0 16px;
   color: var(--muted);
   background: transparent;
   font-weight: 700;
-  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  transition: color 0.2s ease, background-color 0.2s ease;
 }
 
 .segmented button.active {
@@ -1793,8 +1813,20 @@ select:focus {
   box-shadow: 0 8px 20px rgba(34, 158, 217, 0.24);
 }
 
+.segmented.has-indicator button.active {
+  background: transparent;
+  box-shadow: none;
+}
+
 .segmented button:hover {
   color: var(--ink);
+}
+
+.segmented.has-indicator button:hover {
+  background: transparent;
+}
+
+.segmented:not(.has-indicator) button:hover {
   background: var(--primary-soft);
 }
 
