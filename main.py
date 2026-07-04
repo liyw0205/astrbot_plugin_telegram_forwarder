@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from astrbot.api import AstrBotConfig, logger, star
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.web import error_response, json_response, request
 
 try:
     from astrbot.core.utils import path_utils as astrbot_path_utils
@@ -134,18 +135,188 @@ class Main(star.Star):
                 "Telegram Forwarder: 缺少 api_id 或 api_hash，请在配置中填写。"
             )
 
+        self._register_dashboard_web_apis()
+
+    def _register_dashboard_web_apis(self) -> None:
+        routes = [
+            ("auth/check", self.dashboard_auth_check, ["POST"], "验证 Dashboard Page 访问"),
+            ("status", self.dashboard_status, ["GET"], "读取运行状态"),
+            ("config", self.dashboard_get_config, ["GET"], "读取配置"),
+            ("config", self.dashboard_save_config, ["POST"], "保存配置"),
+            ("qq/groups", self.dashboard_qq_groups, ["GET"], "加载 QQ 群列表"),
+            (
+                "qq/groups/refresh",
+                self.dashboard_qq_groups_refresh,
+                ["POST"],
+                "刷新 QQ 群列表",
+            ),
+            ("tg/channels", self.dashboard_tg_channels, ["GET"], "加载 Telegram 频道列表"),
+            (
+                "tg/channels/refresh",
+                self.dashboard_tg_channels_refresh,
+                ["POST"],
+                "刷新 Telegram 频道列表",
+            ),
+            ("export/config", self.dashboard_export_config, ["GET"], "导出配置"),
+            ("import/config", self.dashboard_import_config, ["POST"], "导入配置"),
+            ("export/session", self.dashboard_export_session, ["GET"], "导出 Telegram 登录信息"),
+            ("import/session", self.dashboard_import_session, ["POST"], "导入 Telegram 登录信息"),
+            ("login/status", self.dashboard_login_status, ["GET"], "检查 Telegram 登录状态"),
+            ("login/start", self.dashboard_login_start, ["POST"], "发送 Telegram 登录验证码"),
+            ("login/code", self.dashboard_login_code, ["POST"], "提交 Telegram 登录验证码"),
+            ("login/password", self.dashboard_login_password, ["POST"], "提交 Telegram 两步验证密码"),
+            ("login/cancel", self.dashboard_login_cancel, ["POST"], "取消 Telegram 登录流程"),
+            ("login/reset", self.dashboard_login_reset, ["POST"], "重置 Telegram 登录流程"),
+            ("runtime/check", self.dashboard_runtime_check, ["POST"], "立即抓取并发送"),
+            ("runtime/pause", self.dashboard_runtime_pause, ["POST"], "暂停抓取与发送"),
+            ("runtime/resume", self.dashboard_runtime_resume, ["POST"], "恢复抓取与发送"),
+            (
+                "runtime/clear-queue",
+                self.dashboard_runtime_clear_queue,
+                ["POST"],
+                "清空待发送队列",
+            ),
+        ]
+        for route, handler, methods, desc in routes:
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/{route}",
+                handler,
+                methods,
+                desc,
+            )
+
+    def _ensure_web_admin_server(self):
+        if self.web_admin_server is not None:
+            return self.web_admin_server
+
+        from .core.web_admin import WebAdminServer
+
+        loop = self._web_loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+            self._web_loop = loop
+        self.web_admin_server = WebAdminServer(self, loop)
+        return self.web_admin_server
+
+    @staticmethod
+    def _dashboard_ok(data=None, message: str = ""):
+        return json_response({"ok": True, "message": message, "data": data or {}})
+
+    @staticmethod
+    def _dashboard_error(exc: Exception):
+        return error_response(str(exc), status_code=400)
+
+    async def _dashboard_payload(self) -> dict:
+        payload = await request.json(default={})
+        return payload if isinstance(payload, dict) else {}
+
+    async def _dashboard_call(self, operation):
+        try:
+            return self._dashboard_ok(await operation())
+        except Exception as exc:
+            logger.error(f"[DashboardPage] API 调用失败: {exc}", exc_info=True)
+            return self._dashboard_error(exc)
+
+    async def dashboard_auth_check(self):
+        return self._dashboard_ok({"authorized": True})
+
+    async def dashboard_status(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().get_status)
+
+    async def dashboard_get_config(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().get_config)
+
+    async def dashboard_save_config(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().save_config(payload)
+        )
+
+    async def dashboard_qq_groups(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().list_qq_groups)
+
+    async def dashboard_qq_groups_refresh(self):
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().list_qq_groups(force=True)
+        )
+
+    async def dashboard_tg_channels(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().list_tg_channels)
+
+    async def dashboard_tg_channels_refresh(self):
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().list_tg_channels(force=True)
+        )
+
+    async def dashboard_export_config(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().export_config)
+
+    async def dashboard_import_config(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().import_config(payload)
+        )
+
+    async def dashboard_export_session(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().export_session)
+
+    async def dashboard_import_session(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().import_session(payload)
+        )
+
+    async def dashboard_login_status(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().get_login_status)
+
+    async def dashboard_login_start(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().login_start(payload)
+        )
+
+    async def dashboard_login_code(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().login_code(payload)
+        )
+
+    async def dashboard_login_password(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().login_password(payload)
+        )
+
+    async def dashboard_login_cancel(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().login_cancel)
+
+    async def dashboard_login_reset(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().login_reset)
+
+    async def dashboard_runtime_check(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().runtime_check)
+
+    async def dashboard_runtime_pause(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().runtime_pause)
+
+    async def dashboard_runtime_resume(self):
+        return await self._dashboard_call(self._ensure_web_admin_server().runtime_resume)
+
+    async def dashboard_runtime_clear_queue(self):
+        payload = await self._dashboard_payload()
+        return await self._dashboard_call(
+            lambda: self._ensure_web_admin_server().runtime_clear_queue(payload)
+        )
+
     def _start_web_admin_server(self) -> None:
         try:
             from .core.web_admin import WebAdminServer
 
-            web_config = self.config.get("web_config", {})
-            if isinstance(web_config, dict) and not WebAdminServer._to_bool(
-                web_config.get("enabled"), True
-            ):
-                logger.info("Telegram Forwarder Web 管理页面未启用。")
-                return
-
-            self.web_admin_server = WebAdminServer(self, self._web_loop)
+            if self.web_admin_server is None:
+                self.web_admin_server = WebAdminServer(self, self._web_loop)
             self.web_admin_server.start()
         except Exception as e:
             logger.error(f"Telegram Forwarder Web 管理页面启动失败: {e}")

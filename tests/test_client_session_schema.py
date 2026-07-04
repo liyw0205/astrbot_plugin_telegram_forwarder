@@ -135,6 +135,19 @@ def load_main_module(data_dir: Path):
         "astrbot.api.event": SimpleNamespace(
             AstrMessageEvent=object, filter=filter_stub
         ),
+        "astrbot.api.web": SimpleNamespace(
+            error_response=lambda message, status_code=400, data=None, headers=None: {
+                "status": "error",
+                "message": message,
+                "data": data or {},
+                "status_code": status_code,
+            },
+            json_response=lambda data=None, status_code=200, headers=None: {
+                "status_code": status_code,
+                "data": data or {},
+            },
+            request=MagicMock(),
+        ),
         "astrbot.core": MagicMock(),
         "astrbot.core.utils": SimpleNamespace(path_utils=path_utils_stub),
         "astrbot.core.utils.path_utils": path_utils_stub,
@@ -443,6 +456,24 @@ def test_restore_backup_when_migration_write_fails():
         assert row == (5, "149.154.167.51", 443, b"auth-key", 9, b"tmp-key")
         assert legacy_exists is None
         assert (tmp_dir / "user_session.session.bak").exists()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_main_registers_dashboard_page_web_apis():
+    tmp_dir = make_test_dir()
+    try:
+        main_module = load_main_module(tmp_dir)
+        context = MagicMock()
+
+        main_module.Main(context, {})
+
+        registered_routes = [call.args[0] for call in context.register_web_api.call_args_list]
+        assert f"/{PLUGIN_NAME}/status" in registered_routes
+        assert f"/{PLUGIN_NAME}/config" in registered_routes
+        assert f"/{PLUGIN_NAME}/login/start" in registered_routes
+        assert f"/{PLUGIN_NAME}/runtime/check" in registered_routes
+        assert all(route.startswith(f"/{PLUGIN_NAME}/") for route in registered_routes)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

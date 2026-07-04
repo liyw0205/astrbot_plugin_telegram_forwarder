@@ -1,0 +1,67 @@
+:root {
+  color-scheme: light;
+
+  /* ===== 品牌主色：Telegram 蓝 ===== */
+  --primary: #229ed9;
+  --primary-strong: #1c87c0;
+  --primary-soft: rgba(34, 158, 217, 0.1);
+  --primary-tint: rgba(34, 158, 217, 0.2);
+
+  /* ===== 辅助强调色：天蓝（青春活力亮点）===== */
+  --accent: #38bdf8;
+  --accent-strong: #0ea5e9;
+  --accent-soft: rgba(56, 189, 248, 0.1);
+
+  /* ===== 点缀色：紫罗兰（仅用于指标图标等小面积提亮，避免全蓝单调）===== */
+  --violet: #7c6cf0;
+  --violet-soft: rgba(124, 108, 240, 0.12);
+
+  /* ===== 向后兼容别名 =====
+     历史代码沿用 --blue* / --lime* 命名，统一映射到品牌蓝，
+     避免遗漏引用产生荧光绿残留。新代码请直接使用 --primary* / --accent*。 */
+  --blue: var(--primary);
+  --blue-strong: var(--accent);
+  --blue-soft: var(--primary-soft);
+  --blue-tint: var(--primary-tint);
+  --lime: var(--primary);
+  --lime-strong: var(--primary-strong);
+  --lime-soft: var(--primary-soft);
+
+  /* ===== 表面与背景 ===== */
+  --bg: #f4f8fc;
+  --surface: #ffffff;
+  --panel: var(--surface);
+  --panel-solid: var(--surface);
+  --panel-raised: var(--surface);
+  /* 凹陷区：替代暗色模式下的 rgba(7,11,26,*) 深蓝黑底 */
+  --inset: #f1f5f9;
+  --inset-soft: #f8fafc;
+  --overlay: rgba(255, 255, 255, 0.72);
+
+  /* ===== 文字 ===== */
+  --ink: #0f172a;
+  --text: #334155;
+  --muted: #64748b;
+
+  /* ===== 线条与边框 ===== */
+  --line: rgba(15, 23, 42, 0.08);
+  --line-strong: rgba(15, 23, 42, 0.14);
+  --border-glow: rgba(34, 158, 217, 0.2);
+  --border-glow-active: rgba(34, 158, 217, 0.45);
+
+  /* ===== 语义色（独立，不再共用品牌主色）===== */
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.1);
+  --success: #10b981;
+  --success-soft: rgba(16, 185, 129, 0.12);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.12);
+
+  --soft: rgba(15, 23, 42, 0.04);
+  --field-bg: #ffffff;
+
+  /* ===== 阴影：蓝色柔光（替代原荧光绿光晕）===== */
+  --shadow: 0 10px 30px rgba(34, 158, 217, 0.1), 0 2px 6px rgba(15, 23, 42, 0.05);
+  --shadow-tight: 0 4px 14px rgba(34, 158, 217, 0.1), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --focus-ring: 0 0 0 3px rgba(34, 158, 217, 0.22);
+}

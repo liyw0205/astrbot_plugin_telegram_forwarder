@@ -66,13 +66,16 @@
 
 ## Web 管理页面
 
-插件内置 Flask Web 管理页面，启动插件后默认监听：
+插件支持两种 Web 管理入口：
+
+1. AstrBot Dashboard 内嵌页面：进入 AstrBot WebUI 的插件详情页，打开插件行为里的 `dashboard` 页面。该入口复用 AstrBot Dashboard 登录态，不需要单独输入 Web Token，也不需要额外开放端口。
+2. 独立 Flask Web 管理页面：保留给旧部署和直接浏览器访问场景，启动插件后默认监听：
 
 ```text
 http://127.0.0.1:8180/
 ```
 
-首次启动会自动生成随机 Web Token，并写入插件配置的 `web_config.token`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`；如需局域网访问，请显式将 `host` 改为 `0.0.0.0`。
+独立 Flask 页面首次启动会自动生成随机 Web Token，并写入插件配置的 `web_config.token`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`；如需局域网访问，请显式将 `host` 改为 `0.0.0.0`。这些配置只影响独立 Flask 页面，不影响 AstrBot Dashboard 内嵌页面。
 
 页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面或 `relogin.py` 本地工具提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
 
