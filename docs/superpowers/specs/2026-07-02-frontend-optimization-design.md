@@ -69,13 +69,13 @@ export const store = {
     activeSection: "overview",
     expandedChannels: new Set(),
   },
-  
+
   listeners: [],
-  
+
   subscribe(fn) {
     this.listeners.push(fn);
   },
-  
+
   updateState(changes) {
     this.state = { ...this.state, ...changes };
     this.listeners.forEach(fn => fn(this.state));

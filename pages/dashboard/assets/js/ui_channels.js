@@ -2,7 +2,7 @@ import { store } from './store.js';
 import { escapeHtml, channelKey } from './utils.js';
 import { renderQQTargetSelector, renderTGChannelSelector, channelTitleUI, splitList, joinList } from './ui_selector.js';
 import { els } from './context.js';
-import { MSG_TYPES, TRI_STATE, CHANNEL_GROUPS, MERGE_RULE_CLASSES } from '../app.js';
+import { MSG_TYPES, TRI_STATE, CHANNEL_GROUPS, MERGE_RULE_CLASSES } from './config.js';
 
 export function defaultChannel() {
   return {
@@ -40,6 +40,11 @@ function activeChannelGroup(key) {
 
 export function channelField(card, name) {
   return card.querySelector(`[data-channel-field="${name}"]`);
+}
+
+function normalizeChannelFieldValue(field, fallback) {
+  if (!field) return String(fallback || "").replace(/^[@#]/, "");
+  return String(field.value || "").trim().replace(/^[@#]/, "");
 }
 
 export function collectChannels({ keepEmpty = true } = {}) {
@@ -83,9 +88,13 @@ export function collectChannels({ keepEmpty = true } = {}) {
       };
       const getTri = (name, fallback) => getText(name) || fallback;
       const oldKey = card.dataset.channelKey;
+      const channelUsernameField = channelField(card, "channel_username");
       const collected = {
         __template_key: "default",
-        channel_username: (getText("channel_username") || current.channel_username).replace(/^[@#]/, ""),
+        channel_username: normalizeChannelFieldValue(
+          channelUsernameField,
+          current.channel_username,
+        ),
         start_time: channelField(card, "start_time") ? getText("start_time") : current.start_time,
         check_interval: getInt("check_interval", current.check_interval),
         msg_limit: getInt("msg_limit", current.msg_limit),

@@ -321,7 +321,7 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
         attrs: "data-clear-tg-target",
       })
     : "";
-  
+
   const visibleChannels = compact
     ? [...channels].sort((a, b) =>
         Number(String(b.channel_ref || "") === currentRef) - Number(String(a.channel_ref || "") === currentRef),

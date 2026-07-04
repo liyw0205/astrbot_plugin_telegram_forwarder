@@ -55,7 +55,7 @@ export function updateLoginSteps() {
     const connectStep = document.querySelector('[data-login-step="connect"]');
     const codeStep = document.querySelector('[data-login-step="code"]');
     const passwordStep = document.querySelector('[data-login-step="password"]');
-    
+
     if (connectStep) {
       connectStep.hidden = false;
       connectStep.classList.add(telegram.code_sent ? "done" : "active");

@@ -16,6 +16,7 @@ __pycache__/
 .pytest_cache/
 .pytest-tmp/
 .pytest_tmp/
+pytest_tmp/
 .mypy_cache/
 .venv/
 venv/

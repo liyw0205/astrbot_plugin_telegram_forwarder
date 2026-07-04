@@ -218,7 +218,7 @@ def test_topology_edges_align_with_node_cards_at_any_width() -> None:
         assert "overflow: visible;" in body
 
     for asset_root in (WEB_ASSETS, PAGE_ASSETS):
-        text = (asset_root / "app.js").read_text(encoding="utf-8")
+        text = (asset_root / "js" / "ui_topology.js").read_text(encoding="utf-8")
         # SVG 画布已被 CSS 夹在两列卡片之间，x 轴 0→100 必须画满全幅才能贴合卡片边缘
         assert 'd="M 0 ${y1} C 35 ${y1}, 65 ${y2}, 100 ${y2}"' in text
         assert 'd="M 28' not in text
@@ -253,9 +253,25 @@ def test_legacy_web_relative_module_imports_resolve() -> None:
             )
 
 
+def test_app_entrypoint_stays_thin_after_module_split() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        app_lines = (asset_root / "app.js").read_text(encoding="utf-8").splitlines()
+        assert len(app_lines) < 500
+        for module_name in ("config.js", "ui_config.js", "ui_topology.js"):
+            assert (asset_root / "js" / module_name).is_file()
+
+
+def test_channel_collection_allows_explicit_channel_clear() -> None:
+    text = (WEB_ASSETS / "js" / "ui_channels.js").read_text(encoding="utf-8")
+
+    assert 'channel_username: (getText("channel_username") || current.channel_username)' not in text
+    assert 'const channelUsernameField = channelField(card, "channel_username");' in text
+    assert "normalizeChannelFieldValue(" in text
+
+
 def test_topology_stage_drop_does_not_add_qq_payload_as_default_target() -> None:
     for asset_root in (WEB_ASSETS, PAGE_ASSETS):
-        text = (asset_root / "app.js").read_text(encoding="utf-8")
+        text = (asset_root / "js" / "ui_topology.js").read_text(encoding="utf-8")
 
         assert 'payload.type === "tg"' in text
         assert 'payload.type === "qq"' in text
@@ -265,8 +281,8 @@ def test_topology_stage_drop_does_not_add_qq_payload_as_default_target() -> None
 
 def test_topology_nodes_expose_context_menu_removal_actions() -> None:
     targets = [
-        (WEB_ASSETS / "app.js", WEB_ASSETS / "css" / "components.css"),
-        (PAGE_ASSETS / "app.js", PAGE_ASSETS / "style.css"),
+        (WEB_ASSETS / "js" / "ui_topology.js", WEB_ASSETS / "css" / "components.css"),
+        (PAGE_ASSETS / "js" / "ui_topology.js", PAGE_ASSETS / "style.css"),
     ]
 
     for app_path, css_path in targets:

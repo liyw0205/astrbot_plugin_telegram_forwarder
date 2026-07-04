@@ -226,7 +226,7 @@ export function bindCardPhysics(el) {
   if (!el || !window.gsap) return;
   if (el.dataset.physicsBound === "true") return;
   el.dataset.physicsBound = "true";
-  
+
   el.addEventListener("mouseenter", () => {
     window.gsap.to(el, {
       y: -4,

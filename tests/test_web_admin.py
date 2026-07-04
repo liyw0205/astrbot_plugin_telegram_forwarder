@@ -662,12 +662,12 @@ async def test_runtime_check_forces_fetch_then_sends(web_admin):
 
 def test_static_assets_serving(web_admin):
     client = web_admin.server.app.test_client()
-    
+
     # 验证主页面
     r = client.get("/")
     assert r.status_code == 200
     assert b"<!doctype html>" in r.data.lower()
-    
+
     # 验证静态资源
     paths = [
         "/assets/style.css",
@@ -677,13 +677,16 @@ def test_static_assets_serving(web_admin):
         "/assets/css/section-channels.css",
         "/assets/app.js",
         "/assets/js/context.js",
+        "/assets/js/config.js",
         "/assets/js/api.js",
         "/assets/js/store.js",
         "/assets/js/utils.js",
+        "/assets/js/ui_config.js",
         "/assets/js/ui_overview.js",
         "/assets/js/ui_login.js",
         "/assets/js/ui_selector.js",
         "/assets/js/ui_channels.js",
+        "/assets/js/ui_topology.js",
     ]
     for path in paths:
         assert client.get(path).status_code == 200, f"Static asset {path} failed to resolve"

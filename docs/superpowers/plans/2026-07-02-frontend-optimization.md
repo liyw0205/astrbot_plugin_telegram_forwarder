@@ -22,19 +22,19 @@
 ```python
 def test_static_assets_serving(web_admin):
     client = web_admin.server.app.test_client()
-    
+
     # 验证主页面
     r = client.get("/")
     assert r.status_code == 200
     assert b"<!doctype html>" in r.data.lower()
-    
+
     # 验证 CSS 文件
     assert client.get("/assets/style.css").status_code == 200
     assert client.get("/assets/css/variables.css").status_code == 200
     assert client.get("/assets/css/base.css").status_code == 200
     assert client.get("/assets/css/components.css").status_code == 200
     assert client.get("/assets/css/section-channels.css").status_code == 200
-    
+
     # 验证 JS 模块
     assert client.get("/assets/app.js").status_code == 200
     assert client.get("/assets/js/api.js").status_code == 200
@@ -281,7 +281,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initLogin(store);
   initOverview(store);
   initChannels(store);
-  
+
   // 统一的 tab 路由切换
   // 统一的保存配置触发入口
 });

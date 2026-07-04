@@ -162,9 +162,9 @@ function updateQueueList(container, entries) {
       el.className = "queue-item";
       el.dataset.channel = channel;
       el.innerHTML = `<span>${escapeHtml(channel)}</span><strong>${count}</strong>`;
-      
+
       container.appendChild(el);
-      
+
       // Animate new item entry
       if (window.gsap && motionEnabled()) {
         window.gsap.fromTo(el,
