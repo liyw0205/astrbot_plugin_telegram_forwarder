@@ -74,7 +74,7 @@ http://127.0.0.1:8180/
 
 首次启动会自动生成随机 Web Token，并写入插件配置的 `web_config.token`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`；如需局域网访问，请显式将 `host` 改为 `0.0.0.0`。
 
-页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
+页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面或 `relogin.py` 本地工具提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
 
 ## ⚙️ 配置说明
 
@@ -195,7 +195,7 @@ https://api.ipify.org
 由于 Docker/后台环境无法直接输入验证码，或因服务器网络环境触发人机验证（Cloudflare 等）导致登录失败，请按以下步骤在本地环境中生成会话文件：
 1. 进入插件目录：`cd data/plugins/astrbot_plugin_telegram_forwarder`
 2. 运行登录工具：`python relogin.py` (请确保已安装依赖)
-3. 按提示输入手机号与验证码，生成的 `user_session.session` 会自动保存至数据目录。
+3. 按提示输入手机号与 Telegram 收到的验证码原文（不要每位加 1），生成的 `user_session.session` 会自动保存至数据目录。
 4. 重启 AstrBot 即可生效。
 
 > **提示**：如果机器人的网络环境被 Telegram 要求人机验证而无法登录，您可以将此工具下载到本地电脑，更换网络环境运行成功后再将生成的 `.session` 文件上传至插件数据目录。

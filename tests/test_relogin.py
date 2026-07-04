@@ -43,6 +43,33 @@ def test_relogin_exits_when_api_id_is_not_integer():
 
 
 @pytest.mark.asyncio
+async def test_relogin_prompts_for_original_verification_code():
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock()
+    client.is_user_authorized = AsyncMock(return_value=False)
+    client.send_code_request = AsyncMock()
+    client.sign_in = AsyncMock()
+    client.get_me = AsyncMock(
+        return_value=SimpleNamespace(first_name="Test", username="user")
+    )
+
+    relogin_module = load_relogin_module(MagicMock(return_value=client))
+
+    with patch(
+        "builtins.input", side_effect=["+8613800000000", "12345"]
+    ) as input_mock:
+        await relogin_module.main()
+
+    prompts = [call.args[0] for call in input_mock.call_args_list]
+    code_prompt = prompts[1]
+    assert "验证码原文" in code_prompt
+    assert "不要" in code_prompt
+    assert "加 1" in code_prompt
+    client.sign_in.assert_awaited_once_with("+8613800000000", "12345")
+
+
+@pytest.mark.asyncio
 async def test_relogin_disconnects_when_sign_in_raises():
     client = MagicMock()
     client.connect = AsyncMock()
