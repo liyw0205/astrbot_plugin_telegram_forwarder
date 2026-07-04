@@ -20,6 +20,27 @@ export function channelTitle(username) {
   return `@${username.replace(/^@/, "")}`;
 }
 
+export function bindLiveSearchInput(input, onSearch) {
+  if (!input || typeof onSearch !== "function") return;
+  let composing = false;
+  input.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  input.addEventListener("compositionend", (event) => {
+    composing = false;
+    onSearch(event.target.value);
+  });
+  input.addEventListener("input", (event) => {
+    if (composing || event.isComposing) return;
+    onSearch(event.target.value);
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+    }
+  });
+}
+
 const REDUCED_MOTION_QUERY =
   typeof window !== "undefined" && typeof window.matchMedia === "function"
     ? window.matchMedia("(prefers-reduced-motion: reduce)")

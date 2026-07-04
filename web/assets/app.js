@@ -16,8 +16,8 @@ import {
 import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
 import { initChannels, collectChannels, collectMergeRules, defaultChannel, renderChannels, renderMergeRules } from './js/ui_channels.js';
-import { renderQQTargetSelector, renderTGChannelSelector, splitList, joinList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './js/ui_selector.js';
-import { escapeHtml, channelKey, motionEnabled } from './js/utils.js';
+import { renderQQTargetSelector, renderSelectorChip, renderTGChannelSelector, splitList, joinList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './js/ui_selector.js';
+import { bindLiveSearchInput, escapeHtml, channelKey, motionEnabled } from './js/utils.js';
 
 export const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
 export const TRI_STATE = ["继承全局", "开启", "关闭"];
@@ -232,11 +232,15 @@ const TOPOLOGY_FILTERS = new Set(["all", "active", "dedicated", "inherited", "un
 const topologyUiState = {
   query: "",
   filter: "all",
+  paletteChannelsQuery: "",
+  paletteGroupsQuery: "",
 };
 const topologyPointer = {
   x: null,
   y: null,
 };
+let topologyContextMenu = null;
+let topologyContextCleanup = null;
 
 function topologyY(index) {
   return TOPOLOGY_TOP_PADDING + index * TOPOLOGY_ROW_HEIGHT;
@@ -397,6 +401,115 @@ function connectTopologyTarget(channelIndex, target) {
   showToast("已为频道添加专属 QQ 目标，保存后生效。");
 }
 
+function removeTopologyChannel(channelIndex) {
+  const channels = store.state.config?.source_channels;
+  if (!Array.isArray(channels) || !channels[channelIndex]) return;
+  const channel = channels[channelIndex];
+  const key = channelKey(channel, channelIndex);
+  channels.splice(channelIndex, 1);
+  store.state.expandedChannels.delete(key);
+  delete store.state.channelGroups[key];
+  renderChannels();
+  renderTopologySurfaces();
+  showToast("已移除频道节点，保存后生效。");
+}
+
+function removeTopologyTarget(target) {
+  const targetValue = String(target || "").trim();
+  if (!targetValue || !store.state.config) return;
+  let removed = 0;
+  const removeTarget = (items) => {
+    const current = uniqueList(splitList(items || []));
+    const next = current.filter((item) => item !== targetValue);
+    removed += current.length - next.length;
+    return next;
+  };
+
+  store.state.config.target_qq_session = removeTarget(store.state.config.target_qq_session || []);
+  const channels = Array.isArray(store.state.config.source_channels) ? store.state.config.source_channels : [];
+  channels.forEach((channel) => {
+    channel.target_qq_sessions = removeTarget(channel.target_qq_sessions || []);
+  });
+  if (!removed) return;
+  if (els.targetQQInput) {
+    els.targetQQInput.value = joinList(store.state.config.target_qq_session);
+  }
+  renderQQTargetSelector({
+    root: els.defaultQQSelector,
+    manualInput: els.targetQQInput,
+    inheritLabel: "未配置默认 QQ 目标",
+    compact: true,
+  });
+  renderChannels();
+  renderTopologySurfaces();
+  showToast("已移除 QQ 群节点，保存后生效。");
+}
+
+function closeTopologyContextMenu() {
+  if (topologyContextCleanup) {
+    topologyContextCleanup();
+    topologyContextCleanup = null;
+  }
+  if (topologyContextMenu) {
+    topologyContextMenu.remove();
+    topologyContextMenu = null;
+  }
+}
+
+function showTopologyContextMenu(event, anchorNode, items) {
+  closeTopologyContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "topology-context-menu";
+  if (items.length === 1 && items[0]?.danger) {
+    menu.classList.add("danger-only");
+  }
+  menu.setAttribute("role", "menu");
+  menu.style.left = `${event.clientX}px`;
+  menu.style.top = `${event.clientY}px`;
+  items.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.textContent = item.label;
+    if (item.danger) button.classList.add("danger");
+    button.addEventListener("click", () => {
+      closeTopologyContextMenu();
+      item.action();
+    });
+    menu.appendChild(button);
+  });
+  document.body.appendChild(menu);
+  topologyContextMenu = menu;
+  window.requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8))}px`;
+  });
+
+  const onPointerDown = (nextEvent) => {
+    if (!menu.contains(nextEvent.target)) closeTopologyContextMenu();
+  };
+  const onPointerMove = (nextEvent) => {
+    const target = nextEvent.target;
+    if (anchorNode.contains(target) || menu.contains(target)) return;
+    closeTopologyContextMenu();
+  };
+  const onKeyDown = (nextEvent) => {
+    if (nextEvent.key === "Escape") closeTopologyContextMenu();
+  };
+  const onScroll = () => closeTopologyContextMenu();
+  document.addEventListener("pointerdown", onPointerDown);
+  document.addEventListener("pointermove", onPointerMove);
+  document.addEventListener("keydown", onKeyDown);
+  window.addEventListener("scroll", onScroll, true);
+  topologyContextCleanup = () => {
+    document.removeEventListener("pointerdown", onPointerDown);
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("scroll", onScroll, true);
+  };
+}
+
 function openTopologyChannel(channelIndex) {
   const channel = store.state.config?.source_channels?.[channelIndex];
   if (!channel) return;
@@ -431,6 +544,13 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       node.addEventListener("click", () => openTopologyChannel(index));
     }
     if (editable) {
+      node.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showTopologyContextMenu(event, node, [
+          { label: "移除频道节点", danger: true, action: () => removeTopologyChannel(index) },
+        ]);
+      });
       node.addEventListener("dragover", (event) => {
         event.preventDefault();
         node.classList.add("drop-ready");
@@ -438,6 +558,7 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       node.addEventListener("dragleave", () => node.classList.remove("drop-ready"));
       node.addEventListener("drop", (event) => {
         event.preventDefault();
+        event.stopPropagation();
         node.classList.remove("drop-ready");
         try {
           const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
@@ -448,6 +569,18 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       });
     }
   });
+
+  if (editable) {
+    root.querySelectorAll("[data-topology-target-key]").forEach((node) => {
+      node.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showTopologyContextMenu(event, node, [
+          { label: "移除 QQ 群节点", danger: true, action: () => removeTopologyTarget(node.dataset.topologyTargetKey) },
+        ]);
+      });
+    });
+  }
 
   const stage = root.querySelector("[data-topology-drop-stage]");
   if (editable && stage) {
@@ -462,6 +595,7 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       try {
         const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
         if (payload.type === "tg") addTopologyChannel(payload.value);
+        if (payload.type === "qq") showToast("请将 QQ 群拖到左侧 Telegram 频道节点上建立专属关系。");
       } catch {
         showToast("拖拽数据无效。");
       }
@@ -621,6 +755,23 @@ function bindTargetTopologyInteractions(root, { editable = true, allowOpenChanne
       restoreFocus();
     }
   }
+
+  // Palette search inputs
+  const channelsSearch = root.querySelector("[data-topology-search-channels]");
+  if (channelsSearch) {
+    bindLiveSearchInput(channelsSearch, (value) => {
+      topologyUiState.paletteChannelsQuery = value;
+      renderTargetTopology();
+    });
+  }
+
+  const groupsSearch = root.querySelector("[data-topology-search-groups]");
+  if (groupsSearch) {
+    bindLiveSearchInput(groupsSearch, (value) => {
+      topologyUiState.paletteGroupsQuery = value;
+      renderTargetTopology();
+    });
+  }
 }
 
 function captureTopologyScroll(root) {
@@ -657,6 +808,23 @@ function renderTopologyInto(root, {
   showSummary = false,
 } = {}) {
   if (!root) return;
+  closeTopologyContextMenu();
+  // Capture active search input and selection range
+  let activeSearchType = null;
+  let selectionStart = 0;
+  let selectionEnd = 0;
+  if (document.activeElement && root.contains(document.activeElement)) {
+    if (document.activeElement.hasAttribute("data-topology-search-channels")) {
+      activeSearchType = "channels";
+    } else if (document.activeElement.hasAttribute("data-topology-search-groups")) {
+      activeSearchType = "groups";
+    }
+    if (activeSearchType) {
+      selectionStart = document.activeElement.selectionStart || 0;
+      selectionEnd = document.activeElement.selectionEnd || 0;
+    }
+  }
+
   const scrollState = captureTopologyScroll(root);
   const cfg = store.state.config || {};
   const channels = Array.isArray(cfg.source_channels) ? cfg.source_channels : [];
@@ -715,33 +883,75 @@ function renderTopologyInto(root, {
       return ref && !configuredRefs.has(ref);
     });
   const availableGroups = store.state.qqGroups;
+
+  // Filter channels based on palette search query
+  const channelsKeyword = String(topologyUiState.paletteChannelsQuery || "").trim().toLowerCase();
+  const filteredChannels = availableChannels.filter((channel) => {
+    if (!channelsKeyword) return true;
+    return (
+      String(channel.title || "").toLowerCase().includes(channelsKeyword) ||
+      String(channel.username || "").toLowerCase().includes(channelsKeyword) ||
+      String(channel.channel_ref || "").toLowerCase().includes(channelsKeyword)
+    );
+  });
+
+  // Filter groups based on palette search query
+  const groupsKeyword = String(topologyUiState.paletteGroupsQuery || "").trim().toLowerCase();
+  const filteredGroups = availableGroups.filter((group) => {
+    if (!groupsKeyword) return true;
+    return (
+      String(group.group_id || "").toLowerCase().includes(groupsKeyword) ||
+      String(group.group_name || "").toLowerCase().includes(groupsKeyword)
+    );
+  });
+
   const palette = showPalette ? `
     <div class="topology-palette">
-      <div>
-        <strong>可拖入频道 <span>${availableChannels.length}</span></strong>
+      <div class="topology-palette-col">
+        <strong>可拖入频道</strong>
+        <div class="topology-palette-search-wrapper">
+          <input data-topology-search-channels type="search" placeholder="搜索频道标题、用户名或 ID" value="${escapeHtml(topologyUiState.paletteChannelsQuery)}" />
+        </div>
+        <div class="topology-palette-status">${filteredChannels.length} 个可拖入频道</div>
         <div class="topology-chip-row" data-topology-scroll="channels">
           ${
-            availableChannels.length
-              ? availableChannels.map((channel) => {
+            filteredChannels.length
+              ? filteredChannels.map((channel) => {
                   const ref = normalizeChannelRef(channel.channel_ref || channel.username);
                   const label = channel.title || channel.username || ref;
-                  return `<button class="topology-chip" type="button" draggable="true" data-topology-add-channel="${escapeHtml(ref)}" data-drag-payload="${topologyDragData("tg", ref)}">${escapeHtml(label)}</button>`;
+                  const meta = channel.username ? `@${channel.username}` : ref;
+                  return renderSelectorChip({
+                    label,
+                    meta,
+                    className: "topology-chip",
+                    attrs: `draggable="true" data-topology-add-channel="${escapeHtml(ref)}" data-drag-payload="${topologyDragData("tg", ref)}"`,
+                  });
                 }).join("")
-              : '<span class="topology-palette-empty">没有可拖入的 Telegram 频道</span>'
+              : '<span class="topology-palette-empty">没有匹配的 Telegram 频道</span>'
           }
         </div>
       </div>
-      <div>
-        <strong>可拖入 QQ 群 <span>${availableGroups.length}</span></strong>
+      <div class="topology-palette-col">
+        <strong>可拖入 QQ 群</strong>
+        <div class="topology-palette-search-wrapper">
+          <input data-topology-search-groups type="search" placeholder="搜索 QQ 群名或群号" value="${escapeHtml(topologyUiState.paletteGroupsQuery)}" />
+        </div>
+        <div class="topology-palette-status">${filteredGroups.length} 个可拖入 QQ 群</div>
         <div class="topology-chip-row" data-topology-scroll="groups">
           ${
-            availableGroups.length
-              ? availableGroups.map((group) => {
+            filteredGroups.length
+              ? filteredGroups.map((group) => {
                   const target = String(group.session || `default:GroupMessage:${group.group_id || ""}`).trim();
                   const label = group.group_name || `群 ${group.group_id}`;
-                  return `<span class="topology-chip topology-chip-target" draggable="true" data-drag-payload="${topologyDragData("qq", target)}">${escapeHtml(label)}</span>`;
+                  const meta = group.group_id ? String(group.group_id) : group.source || "live";
+                  return renderSelectorChip({
+                    label,
+                    meta,
+                    className: "topology-chip",
+                    attrs: `draggable="true" data-drag-payload="${topologyDragData("qq", target)}"`,
+                  });
                 }).join("")
-              : '<span class="topology-palette-empty">没有可拖入的 QQ 群</span>'
+              : '<span class="topology-palette-empty">没有匹配的 QQ 群</span>'
           }
         </div>
       </div>
@@ -756,6 +966,17 @@ function renderTopologyInto(root, {
     `;
     bindTargetTopologyInteractions(root, { editable, allowOpenChannel });
     restoreTopologyScroll(root, scrollState);
+
+    // Restore active search input focus and cursor position
+    if (activeSearchType) {
+      const input = root.querySelector(activeSearchType === "channels" ? "[data-topology-search-channels]" : "[data-topology-search-groups]");
+      if (input) {
+        input.focus();
+        try {
+          input.setSelectionRange(selectionStart, selectionEnd);
+        } catch (e) {}
+      }
+    }
     return;
   }
 
@@ -783,7 +1004,7 @@ function renderTopologyInto(root, {
         target.meta,
         "target",
         index,
-        `${editable ? `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"` : ""} data-topology-target-row="${index}"`,
+        `${editable ? `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"` : ""} data-topology-target-row="${index}" data-topology-target-key="${escapeHtml(target.key)}"`,
         target.inDegree > 1 ? `${target.inDegree} 源` : "",
         targetYs[index],
       ),
@@ -844,6 +1065,17 @@ function renderTopologyInto(root, {
   `;
   bindTargetTopologyInteractions(root, { editable, allowOpenChannel });
   restoreTopologyScroll(root, scrollState);
+
+  // Restore active search input focus and cursor position
+  if (activeSearchType) {
+    const input = root.querySelector(activeSearchType === "channels" ? "[data-topology-search-channels]" : "[data-topology-search-groups]");
+    if (input) {
+      input.focus();
+      try {
+        input.setSelectionRange(selectionStart, selectionEnd);
+      } catch (e) {}
+    }
+  }
 }
 
 export function renderTargetTopology() {

@@ -445,44 +445,57 @@
 .topology-palette {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
-.topology-palette > div {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+.topology-palette-col {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   min-width: 0;
-  max-height: 220px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--inset-soft);
-  overflow: hidden;
 }
 
 .topology-palette strong {
   color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.topology-palette-search-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.topology-palette-search-wrapper input {
+  min-height: 38px;
+  height: 38px;
   font-size: 13px;
 }
 
-.topology-palette strong span {
+.topology-palette-status {
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .topology-chip-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-height: 126px;
   min-width: 0;
   overflow: auto;
-  padding-right: 2px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--inset-soft);
   scrollbar-width: thin;
 }
 
 .topology-chip,
 .topology-palette-empty {
-  min-height: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   max-width: 100%;
@@ -498,21 +511,40 @@
 
 .topology-chip {
   cursor: grab;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.topology-chip.selector-chip {
+  height: auto;
+  min-height: 34px;
+  gap: 7px;
+  text-align: left;
+}
+
+.topology-chip:hover {
+  border-color: var(--primary);
+  background: var(--bg);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-tight);
 }
 
 .topology-chip:active {
   cursor: grabbing;
+  transform: translateY(0);
 }
 
-.topology-chip-target {
-  color: var(--primary);
-  border-color: var(--border-glow-active);
-  background: var(--primary-soft);
+.topology-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
+
 
 .topology-palette-empty {
   color: var(--muted);
-  border-style: dashed;
+  border: none !important;
+  background: transparent !important;
+  font-style: normal;
+  padding: 0 !important;
 }
 
 .topology-canvas {
@@ -769,6 +801,107 @@
   font-style: normal;
   line-height: 1;
   pointer-events: none;
+}
+
+.topology-context-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 176px;
+  display: grid;
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.14), 0 2px 8px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(10px);
+  transform-origin: 12px 10px;
+  animation: topology-context-in 0.14s ease-out;
+}
+
+.topology-context-menu.danger-only {
+  padding: 4px;
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(255, 247, 247, 0.96);
+  box-shadow: 0 16px 38px rgba(127, 29, 29, 0.12), 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+.topology-context-menu button {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-align: left;
+  transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.topology-context-menu button::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: var(--soft);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.topology-context-menu button:hover,
+.topology-context-menu button:focus-visible {
+  outline: none;
+  border-color: rgba(148, 163, 184, 0.34);
+  background: var(--soft);
+  transform: translateX(1px);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+}
+
+.topology-context-menu button.danger {
+  color: var(--danger);
+}
+
+.topology-context-menu button.danger::before {
+  background:
+    linear-gradient(var(--danger), var(--danger)) center / 8px 2px no-repeat,
+    var(--danger-soft);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.28);
+}
+
+.topology-context-menu button.danger:hover,
+.topology-context-menu button.danger:focus-visible {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: var(--danger-soft);
+  box-shadow: 0 8px 18px rgba(239, 68, 68, 0.1);
+}
+
+.topology-context-menu.danger-only button.danger {
+  border-color: rgba(239, 68, 68, 0.22);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.topology-context-menu.danger-only button.danger:hover,
+.topology-context-menu.danger-only button.danger:focus-visible {
+  border-color: rgba(239, 68, 68, 0.36);
+  background: rgba(239, 68, 68, 0.12);
+  box-shadow: 0 8px 18px rgba(239, 68, 68, 0.12);
+}
+
+@keyframes topology-context-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .panel .settings-card {

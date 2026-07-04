@@ -1,5 +1,5 @@
 import { store } from './store.js';
-import { escapeHtml } from './utils.js';
+import { bindLiveSearchInput, escapeHtml } from './utils.js';
 import { showToast, loadQQGroups, loadTGChannels } from './context.js';
 import { collectForms, renderAll } from '../app.js';
 
@@ -21,6 +21,18 @@ export function uniqueList(items) {
     seen.add(value);
     return true;
   });
+}
+
+export function renderSelectorChip({ label, meta = "", selected = false, className = "", attrs = "" }) {
+  const classes = ["selector-chip", selected ? "selected" : "", className].filter(Boolean).join(" ");
+  const attrText = attrs ? ` ${attrs}` : "";
+  const metaHtml = meta ? `<small>${escapeHtml(meta)}</small>` : "";
+  return `
+    <button type="button" class="${escapeHtml(classes)}"${attrText}>
+      <span>${escapeHtml(label)}</span>
+      ${metaHtml}
+    </button>
+  `;
 }
 
 export function isNumericGroupTarget(target) {
@@ -94,9 +106,31 @@ function restoreSelectorScroll(root, scrollState) {
   });
 }
 
+function captureSelectorSearchFocus(root) {
+  const input = root.querySelector("[data-selector-search]");
+  if (!input || document.activeElement !== input) return null;
+  return {
+    start: input.selectionStart || 0,
+    end: input.selectionEnd || 0,
+  };
+}
+
+function restoreSelectorSearchFocus(root, focusState) {
+  if (!focusState) return;
+  const input = root.querySelector("[data-selector-search]");
+  if (!input) return;
+  input.focus();
+  try {
+    input.setSelectionRange(focusState.start, focusState.end);
+  } catch (error) {
+    // Search inputs can reject ranges while the browser is still settling IME state.
+  }
+}
+
 export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未配置默认 QQ 目标", compact = false }) {
   if (!root || !manualInput) return;
   const scrollState = captureSelectorScroll(root);
+  const searchFocus = captureSelectorSearchFocus(root);
   const targets = uniqueList(splitList(manualInput.value));
   const keyword = String(root.dataset.search || "").trim().toLowerCase();
   const groups = store.state.qqGroups.filter((group) => {
@@ -128,12 +162,12 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
     : `<div class="selector-empty">${escapeHtml(inheritLabel)}</div>`;
   const compactManualTargets = targets
     .filter((target) => !groupByTarget(target))
-    .map((target) => `
-      <button type="button" class="selector-chip selected" data-remove-target="${escapeHtml(target)}">
-        <span>${escapeHtml(target)}</span>
-        <small>manual</small>
-      </button>
-    `)
+    .map((target) => renderSelectorChip({
+      label: target,
+      meta: "manual",
+      selected: true,
+      attrs: `data-remove-target="${escapeHtml(target)}"`,
+    }))
     .join("");
 
   const visibleGroups = compact
@@ -145,13 +179,14 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
     ? visibleGroups
         .map((group) => {
           const selected = Boolean(targetForGroup(targets, group.group_id));
+          const groupMeta = group.group_id ? String(group.group_id) : group.source || "live";
           return compact
-            ? `
-              <button type="button" class="selector-chip ${selected ? "selected" : ""}" data-qq-group="${escapeHtml(group.group_id)}">
-                <span>${escapeHtml(group.group_name || `群 ${group.group_id}`)}</span>
-                <small>${selected ? "已选" : escapeHtml(group.source || "live")}</small>
-              </button>
-            `
+            ? renderSelectorChip({
+                label: group.group_name || `群 ${group.group_id}`,
+                meta: selected ? `已选 · ${groupMeta}` : groupMeta,
+                selected,
+                attrs: `data-qq-group="${escapeHtml(group.group_id)}"`,
+              })
             : `
               <button type="button" class="selector-row ${selected ? "selected" : ""}" data-qq-group="${escapeHtml(group.group_id)}">
                 <span>
@@ -192,12 +227,13 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
     }
   `;
   restoreSelectorScroll(root, scrollState);
+  restoreSelectorSearchFocus(root, searchFocus);
 
   // Search input
   const searchInput = root.querySelector("[data-selector-search]");
   if (searchInput) {
-    searchInput.addEventListener("input", (event) => {
-      root.dataset.search = event.target.value;
+    bindLiveSearchInput(searchInput, (value) => {
+      root.dataset.search = value;
       renderQQTargetSelector({ root, manualInput, inheritLabel, compact });
     });
   }
@@ -248,6 +284,7 @@ export function renderQQTargetSelector({ root, manualInput, inheritLabel = "未�
 export function renderTGChannelSelector({ root, manualInput, compact = false }) {
   if (!root || !manualInput) return;
   const scrollState = captureSelectorScroll(root);
+  const searchFocus = captureSelectorSearchFocus(root);
   const currentRef = String(manualInput.value || "").trim().replace(/^@/, "");
   const keyword = String(root.dataset.search || "").trim().toLowerCase();
   const channels = store.state.tgChannels.filter((channel) => {
@@ -277,12 +314,12 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
     `
     : '<div class="selector-empty">未配置 Telegram 目标</div>';
   const compactManualTarget = currentRef && !selectedChannel
-    ? `
-      <button type="button" class="selector-chip selected" data-clear-tg-target>
-        <span>${escapeHtml(selectedLabel)}</span>
-        <small>manual</small>
-      </button>
-    `
+    ? renderSelectorChip({
+        label: selectedLabel,
+        meta: "manual",
+        selected: true,
+        attrs: "data-clear-tg-target",
+      })
     : "";
   
   const visibleChannels = compact
@@ -297,12 +334,12 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
           const selected = String(ref) === currentRef;
           const handle = channel.username ? `@${channel.username}` : ref;
           return compact
-            ? `
-              <button type="button" class="selector-chip ${selected ? "selected" : ""}" data-tg-channel="${escapeHtml(ref)}">
-                <span>${escapeHtml(channel.title || handle)}</span>
-                <small>${selected ? "已选" : escapeHtml(handle)}</small>
-              </button>
-            `
+            ? renderSelectorChip({
+                label: channel.title || handle,
+                meta: selected ? "已选" : handle,
+                selected,
+                attrs: `data-tg-channel="${escapeHtml(ref)}"`,
+              })
             : `
               <button type="button" class="selector-row ${selected ? "selected" : ""}" data-tg-channel="${escapeHtml(ref)}">
                 <span>
@@ -343,12 +380,13 @@ export function renderTGChannelSelector({ root, manualInput, compact = false }) 
     }
   `;
   restoreSelectorScroll(root, scrollState);
+  restoreSelectorSearchFocus(root, searchFocus);
 
   // Search input
   const searchInput = root.querySelector("[data-selector-search]");
   if (searchInput) {
-    searchInput.addEventListener("input", (event) => {
-      root.dataset.search = event.target.value;
+    bindLiveSearchInput(searchInput, (value) => {
+      root.dataset.search = value;
       renderTGChannelSelector({ root, manualInput, compact });
     });
   }
