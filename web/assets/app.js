@@ -1143,35 +1143,55 @@ function renderTopologyInto(root, {
   }
 
   // Staggered entrance animation for nodes and self-drawing lines using GSAP
-  if (window.gsap && motionEnabled()) {
-    const isTyping = document.activeElement && 
-      (document.activeElement === root.querySelector("[data-topology-search-channels]") || 
-       document.activeElement === root.querySelector("[data-topology-search-groups]") || 
-       document.activeElement === els.topologySearchInput);
+  const isTyping = document.activeElement && 
+    (document.activeElement === root.querySelector("[data-topology-search-channels]") || 
+     document.activeElement === root.querySelector("[data-topology-search-groups]") || 
+     document.activeElement === els.topologySearchInput);
 
-    if (isTyping) {
-      window.gsap.from(root.querySelectorAll(".topology-node"), {
-        opacity: 0.5,
-        duration: 0.15,
-        ease: "power2.out"
-      });
-    } else {
-      window.gsap.from(root.querySelectorAll(".topology-node-source"), {
-        opacity: 0,
-        x: -15,
-        duration: 0.4,
-        stagger: 0.03,
-        ease: "power2.out"
-      });
-      window.gsap.from(root.querySelectorAll(".topology-node-target"), {
-        opacity: 0,
-        x: 15,
-        duration: 0.4,
-        stagger: 0.03,
-        ease: "power2.out"
-      });
-      root.querySelectorAll(".topology-lines > path").forEach((path) => {
-        const length = path.getTotalLength() || 1000;
+  animateTopologyInto(root, { isTyping: Boolean(isTyping) });
+}
+
+export function animateTopologyInto(root, { isTyping = false } = {}) {
+  if (!root || !window.gsap || !motionEnabled()) return;
+
+  if (isTyping) {
+    window.gsap.killTweensOf(root.querySelectorAll(".topology-node"));
+    window.gsap.fromTo(root.querySelectorAll(".topology-node"),
+      { opacity: 0.5 },
+      { opacity: 1, duration: 0.15, ease: "power2.out" }
+    );
+    return;
+  }
+
+  // Staggered entrance for nodes
+  const sources = root.querySelectorAll(".topology-node-source");
+  const targets = root.querySelectorAll(".topology-node-target");
+  
+  if (sources.length) {
+    window.gsap.killTweensOf(sources);
+    window.gsap.fromTo(sources,
+      { opacity: 0, x: -15 },
+      { opacity: 1, x: 0, duration: 0.4, stagger: 0.03, ease: "power2.out" }
+    );
+  }
+  if (targets.length) {
+    window.gsap.killTweensOf(targets);
+    window.gsap.fromTo(targets,
+      { opacity: 0, x: 15 },
+      { opacity: 1, x: 0, duration: 0.4, stagger: 0.03, ease: "power2.out" }
+    );
+  }
+
+  // Self-drawing paths: wait two animation frames to ensure the browser has finished layout
+  // so path.getTotalLength() returns the actual layout length rather than 0!
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const paths = root.querySelectorAll(".topology-lines > path");
+      paths.forEach((path) => {
+        const length = path.getTotalLength();
+        if (!length) return; // Skip if hidden or 0 length (handles tab hidden state gracefully)
+
+        window.gsap.killTweensOf(path);
         path.style.strokeDasharray = `${length} ${length}`;
         path.style.strokeDashoffset = length;
         window.gsap.to(path, {
@@ -1185,8 +1205,8 @@ function renderTopologyInto(root, {
           }
         });
       });
-    }
-  }
+    });
+  });
 }
 
 export function renderTargetTopology() {
@@ -1500,6 +1520,14 @@ export function setSection(section) {
     els.sectionTitle.textContent =
       active?.querySelector(".nav-label")?.textContent?.trim() || active?.textContent?.trim() || "总览";
   }
+  
+  // Trigger GSAP entrance animations for the active section's topology
+  if (section === "targets" && els.targetTopology) {
+    animateTopologyInto(els.targetTopology);
+  } else if (section === "overview" && els.overviewTopology) {
+    animateTopologyInto(els.overviewTopology);
+  }
+
   updateTopbarActions();
   closeSidebar();
 }
