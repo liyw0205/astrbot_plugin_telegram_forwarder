@@ -1241,9 +1241,13 @@ export function renderRootConfig() {
   if (els.webTokenInput) els.webTokenInput.value = web.token;
 }
 
+let forwardTabResizeObserver = null;
+
 export function renderForwardTabs() {
   if (!els.forwardTabs) return;
-  els.forwardTabs.classList.add("has-indicator");
+  
+  // Clean up previous indicator state initially to force fallback safety background
+  els.forwardTabs.classList.remove("indicator-positioned");
   
   const buttonsHtml = FORWARD_GROUPS.map(
     (group) =>
@@ -1265,6 +1269,17 @@ export function renderForwardTabs() {
   });
 
   syncForwardTabIndicator();
+
+  // Set up ResizeObserver to recalculate offsets once the iframe layout resolves
+  if (window.ResizeObserver) {
+    if (forwardTabResizeObserver) {
+      forwardTabResizeObserver.disconnect();
+    }
+    forwardTabResizeObserver = new ResizeObserver(() => {
+      syncForwardTabIndicator();
+    });
+    forwardTabResizeObserver.observe(els.forwardTabs);
+  }
 }
 
 function syncForwardTabIndicator() {
@@ -1278,26 +1293,37 @@ function syncForwardTabIndicator() {
       if (!activeBtn.isConnected || !indicator.isConnected) return;
       const targetLeft = activeBtn.offsetLeft;
       const targetWidth = activeBtn.offsetWidth;
-      if (!targetWidth) return; // Layout not resolved yet
+      if (!targetWidth) {
+        // Fallback: If layout is not resolved, hide sliding background to let CSS fallback show
+        els.forwardTabs.classList.remove("indicator-positioned");
+        return;
+      }
 
       if (window.gsap && motionEnabled()) {
         const isFirstTime = !indicator.style.width || indicator.style.width === "0px";
         if (isFirstTime) {
           window.gsap.set(indicator, {
             left: targetLeft,
-            width: targetWidth
+            width: targetWidth,
+            onComplete: () => {
+              els.forwardTabs.classList.add("indicator-positioned");
+            }
           });
         } else {
           window.gsap.to(indicator, {
             left: targetLeft,
             width: targetWidth,
             duration: 0.3,
-            ease: "power2.out"
+            ease: "power2.out",
+            onStart: () => {
+              els.forwardTabs.classList.add("indicator-positioned");
+            }
           });
         }
       } else {
         indicator.style.left = `${targetLeft}px`;
         indicator.style.width = `${targetWidth}px`;
+        els.forwardTabs.classList.add("indicator-positioned");
       }
     });
   });

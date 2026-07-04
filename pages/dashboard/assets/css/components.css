@@ -1158,7 +1158,7 @@ select:focus {
   box-shadow: 0 8px 20px rgba(34, 158, 217, 0.24);
 }
 
-.segmented.has-indicator button.active {
+.segmented.indicator-positioned button.active {
   background: transparent;
   box-shadow: none;
 }
@@ -1167,11 +1167,11 @@ select:focus {
   color: var(--ink);
 }
 
-.segmented.has-indicator button:hover {
+.segmented.indicator-positioned button:hover {
   background: transparent;
 }
 
-.segmented:not(.has-indicator) button:hover {
+.segmented:not(.indicator-positioned) button:hover {
   background: var(--primary-soft);
 }
 
