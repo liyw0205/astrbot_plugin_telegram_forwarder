@@ -1,5 +1,6 @@
 import { store } from './store.js';
 import { apiRequest } from './api.js';
+import { safeStorageSet } from './utils.js';
 
 export const els = {};
 
@@ -127,7 +128,7 @@ export async function saveConfig({ quiet = false } = {}) {
   const newToken = result.config?.web_config?.token;
   if (newToken) {
     store.updateState({ token: newToken });
-    localStorage.setItem("telegram_forwarder_token", newToken);
+    safeStorageSet("telegram_forwarder_token", newToken);
   }
   if (!quiet) {
     showToast(result.web_restart_required ? "配置已保存，Web host/port 需重载插件生效。" : "配置已保存。");

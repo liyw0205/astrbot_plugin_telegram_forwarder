@@ -1,4 +1,5 @@
 import { store } from './store.js';
+import { safeStorageRemove } from './utils.js';
 
 const LEGACY_API_PREFIX = "/api/";
 
@@ -7,7 +8,17 @@ function dashboardBridge() {
 }
 
 export function isDashboardPage() {
-  return Boolean(dashboardBridge());
+  return Boolean(dashboardBridge()) || window.location.pathname.startsWith("/api/plugin/page/content/");
+}
+
+async function waitForDashboardBridge(timeout = 5000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    const bridge = dashboardBridge();
+    if (bridge) return bridge;
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+  }
+  throw new Error("AstrBot Dashboard bridge is not available.");
 }
 
 function bridgeEndpoint(path) {
@@ -31,8 +42,7 @@ function bridgePayload(payload) {
 }
 
 async function bridgeRequest(path, method = "GET", body = null) {
-  const bridge = dashboardBridge();
-  if (!bridge) throw new Error("AstrBot Dashboard bridge is not available.");
+  const bridge = await waitForDashboardBridge();
   await bridge.ready();
   const endpoint = bridgeEndpoint(path);
   let payload;
@@ -65,7 +75,7 @@ export async function apiRequest(path, method = 'GET', body = null, timeout = 30
     clearTimeout(id);
     if (res.status === 401 || res.status === 410) {
       store.updateState({ token: "" });
-      localStorage.removeItem("telegram_forwarder_token");
+      safeStorageRemove("telegram_forwarder_token");
       throw new Error("登录已过期，请重新输入 Token");
     }
     const payload = await res.json();

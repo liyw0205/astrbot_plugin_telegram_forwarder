@@ -1,6 +1,8 @@
+import { safeStorageGet } from './utils.js';
+
 export const store = {
   state: {
-    token: localStorage.getItem("telegram_forwarder_token") || "",
+    token: safeStorageGet("telegram_forwarder_token"),
     config: null,
     status: null,
     section: "overview",

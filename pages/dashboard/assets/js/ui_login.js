@@ -1,6 +1,6 @@
 import { store } from './store.js';
 import { apiRequest, isDashboardPage } from './api.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, safeStorageRemove, safeStorageSet } from './utils.js';
 import { els, showToast, withAction, withButtonLoading, loadAll, saveConfig, enterApp } from './context.js';
 
 export async function checkToken(token) {
@@ -28,7 +28,7 @@ export async function loginWithToken(event) {
       return;
     }
     store.updateState({ token });
-    localStorage.setItem("telegram_forwarder_token", token);
+    safeStorageSet("telegram_forwarder_token", token);
     await enterApp();
   } catch (error) {
     if (els.authError) els.authError.textContent = error.message;
@@ -230,7 +230,7 @@ export function initLogin() {
   }
   if (els.logoutBtn) {
     els.logoutBtn.addEventListener("click", () => {
-      localStorage.removeItem("telegram_forwarder_token");
+      safeStorageRemove("telegram_forwarder_token");
       window.location.reload();
     });
   }

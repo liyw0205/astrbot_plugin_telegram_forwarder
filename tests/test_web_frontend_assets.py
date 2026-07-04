@@ -61,10 +61,21 @@ def test_frontend_relative_module_imports_resolve_for_all_entrypoints() -> None:
                 )
 
 
+def test_entrypoints_boot_after_domcontentloaded_if_module_loads_late() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "app.js").read_text(encoding="utf-8")
+
+        assert 'document.readyState === "loading"' in text
+        assert 'document.addEventListener("DOMContentLoaded", boot, { once: true })' in text
+        assert "boot();" in text
+
+
 def test_dashboard_page_uses_bridge_compatible_request_layer() -> None:
     text = (PAGE_ASSETS / "js" / "api.js").read_text(encoding="utf-8")
 
     assert "window.AstrBotPluginPage" in text
+    assert 'window.location.pathname.startsWith("/api/plugin/page/content/")' in text
+    assert "async function waitForDashboardBridge" in text
     assert 'return `page/${legacyEndpoint}`' in text
     assert "bridge.apiGet(endpoint" in text
     assert "bridge.apiPost(endpoint" in text
@@ -87,6 +98,19 @@ def test_dashboard_page_boot_uses_aggregate_page_api() -> None:
     assert 'apiRequest("/api/dashboard")' in context_text
     assert "dashboardPayload.status" in context_text
     assert "dashboardPayload.errors" in context_text
+
+
+def test_dashboard_page_uses_sandbox_safe_storage_helpers() -> None:
+    utils_text = (PAGE_ASSETS / "js" / "utils.js").read_text(encoding="utf-8")
+    assert "safeStorageGet" in utils_text
+    assert "safeStorageSet" in utils_text
+    assert "safeStorageRemove" in utils_text
+
+    for source in [PAGE_ASSETS / "app.js", *(PAGE_ASSETS / "js").glob("*.js")]:
+        if source.name == "utils.js":
+            continue
+        text = source.read_text(encoding="utf-8")
+        assert "localStorage" not in text, f"{source.relative_to(ROOT)} directly accesses localStorage"
 
 
 def test_dashboard_backend_registers_page_api_namespace() -> None:

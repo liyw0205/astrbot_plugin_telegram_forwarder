@@ -41,6 +41,30 @@ export function bindLiveSearchInput(input, onSearch) {
   });
 }
 
+export function safeStorageGet(key, fallback = "") {
+  try {
+    return window.localStorage?.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function safeStorageSet(key, value) {
+  try {
+    window.localStorage?.setItem(key, value);
+  } catch {
+    // Storage can be unavailable in sandboxed plugin page contexts.
+  }
+}
+
+export function safeStorageRemove(key) {
+  try {
+    window.localStorage?.removeItem(key);
+  } catch {
+    // Storage can be unavailable in sandboxed plugin page contexts.
+  }
+}
+
 const REDUCED_MOTION_QUERY =
   typeof window !== "undefined" && typeof window.matchMedia === "function"
     ? window.matchMedia("(prefers-reduced-motion: reduce)")

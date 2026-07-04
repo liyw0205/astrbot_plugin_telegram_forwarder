@@ -1,4 +1,5 @@
 import { store } from './store.js';
+import { safeStorageRemove } from './utils.js';
 
 const LEGACY_API_PREFIX = "/api/";
 
@@ -48,7 +49,7 @@ export async function apiRequest(path, method = 'GET', body = null, timeout = 30
     clearTimeout(id);
     if (res.status === 401 || res.status === 410) {
       store.updateState({ token: "" });
-      localStorage.removeItem("telegram_forwarder_token");
+      safeStorageRemove("telegram_forwarder_token");
       throw new Error("登录已过期，请重新输入 Token");
     }
     const payload = await res.json();

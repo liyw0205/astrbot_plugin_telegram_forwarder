@@ -17,7 +17,7 @@ import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
 import { initChannels, collectChannels, collectMergeRules, defaultChannel, renderChannels, renderMergeRules } from './js/ui_channels.js';
 import { renderQQTargetSelector, renderSelectorChip, renderTGChannelSelector, splitList, joinList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './js/ui_selector.js';
-import { bindLiveSearchInput, escapeHtml, channelKey, motionEnabled } from './js/utils.js';
+import { bindLiveSearchInput, escapeHtml, channelKey, motionEnabled, safeStorageRemove, safeStorageSet } from './js/utils.js';
 
 export const MSG_TYPES = ["文字", "图片", "视频", "音频", "文件"];
 export const TRI_STATE = ["继承全局", "开启", "关闭"];
@@ -1304,7 +1304,7 @@ async function saveRawConfig() {
   const newToken = result.config?.web_config?.token;
   if (newToken) {
     store.updateState({ token: newToken });
-    localStorage.setItem("telegram_forwarder_token", newToken);
+    safeStorageSet("telegram_forwarder_token", newToken);
   }
   renderAll();
   showToast(result.web_restart_required ? "JSON 配置已保存，Web host/port 需重载插件生效。" : "JSON 配置已保存。");
@@ -1567,14 +1567,18 @@ async function boot() {
     if (await checkToken(store.state.token)) {
       await enterApp();
     } else {
-      localStorage.removeItem("telegram_forwarder_token");
+      safeStorageRemove("telegram_forwarder_token");
       store.updateState({ token: "" });
     }
   } catch (error) {
     console.warn("Token validation failed:", error);
-    localStorage.removeItem("telegram_forwarder_token");
+    safeStorageRemove("telegram_forwarder_token");
     store.updateState({ token: "" });
   }
 }
 
-document.addEventListener("DOMContentLoaded", boot);
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", boot, { once: true });
+} else {
+  boot();
+}
