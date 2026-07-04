@@ -59,6 +59,14 @@ def test_dashboard_page_uses_bridge_compatible_request_layer() -> None:
     assert "bridge.apiPost(endpoint" in text
 
 
+def test_dashboard_page_stylesheet_is_self_contained() -> None:
+    text = (PAGE_ASSETS / "style.css").read_text(encoding="utf-8")
+
+    assert "@import" not in text
+    assert ".app-shell" in text
+    assert ".nav-item" in text
+
+
 def test_legacy_web_relative_module_imports_resolve() -> None:
     for source in [WEB_ASSETS / "app.js", *(WEB_ASSETS / "js").glob("*.js")]:
         text = source.read_text(encoding="utf-8")
