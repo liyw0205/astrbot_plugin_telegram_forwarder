@@ -194,6 +194,48 @@ def web_admin(web_admin_module):
         loop.close()
 
 
+def test_web_request_log_entry_suppresses_successful_static_assets(web_admin_module):
+    assert web_admin_module._web_request_log_entry("GET", "/assets/app.js", 200) is None
+
+
+def test_web_request_log_entry_describes_runtime_actions(web_admin_module):
+    level, message = web_admin_module._web_request_log_entry(
+        "POST",
+        "/api/runtime/resume",
+        "200",
+    )
+
+    assert level == "info"
+    assert "恢复抓取与发送" in message
+    assert "成功 200" in message
+    assert "POST /api/runtime/resume" in message
+
+
+def test_web_request_log_entry_keeps_failed_static_assets(web_admin_module):
+    level, message = web_admin_module._web_request_log_entry(
+        "GET",
+        "/assets/missing.css?v=1",
+        404,
+    )
+
+    assert level == "warning"
+    assert "加载静态资源 missing.css" in message
+    assert "失败 404" in message
+    assert "GET /assets/missing.css" in message
+
+
+def test_web_request_handler_uses_readable_logger(web_admin):
+    handler = object.__new__(web_admin.server._request_handler_cls)
+    handler.command = "POST"
+    handler.path = "/api/runtime/resume"
+    web_admin.module.logger.reset_mock()
+
+    handler.log_request(200, "-")
+
+    web_admin.module.logger.info.assert_called_once()
+    assert "恢复抓取与发送" in web_admin.module.logger.info.call_args.args[0]
+
+
 def test_auth_check_accepts_header_and_body_tokens(web_admin):
     client = web_admin.server.app.test_client()
 
@@ -645,4 +687,3 @@ def test_static_assets_serving(web_admin):
     ]
     for path in paths:
         assert client.get(path).status_code == 200, f"Static asset {path} failed to resolve"
-

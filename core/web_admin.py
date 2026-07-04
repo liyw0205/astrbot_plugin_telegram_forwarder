@@ -37,6 +37,84 @@ DEFAULT_WEB_CONFIG = {
     "token": "",
 }
 WEAK_DEFAULT_WEB_TOKENS = {"123456"}
+SILENT_OK_WEB_PATHS = {"/api/status"}
+SILENT_OK_WEB_PREFIXES = ("/assets/",)
+WEB_REQUEST_LABELS = {
+    ("GET", "/"): "打开 Web 管理页面",
+    ("POST", "/api/auth/check"): "验证 Web Token",
+    ("GET", "/api/config"): "读取配置",
+    ("POST", "/api/config"): "保存配置",
+    ("GET", "/api/qq/groups"): "加载 QQ 群列表",
+    ("POST", "/api/qq/groups/refresh"): "刷新 QQ 群列表",
+    ("GET", "/api/tg/channels"): "加载 Telegram 频道列表",
+    ("POST", "/api/tg/channels/refresh"): "刷新 Telegram 频道列表",
+    ("GET", "/api/export/config"): "导出配置",
+    ("POST", "/api/import/config"): "导入配置",
+    ("GET", "/api/export/session"): "导出 Telegram 登录信息",
+    ("POST", "/api/import/session"): "导入 Telegram 登录信息",
+    ("GET", "/api/login/status"): "检查 Telegram 登录状态",
+    ("POST", "/api/login/start"): "发送 Telegram 登录验证码",
+    ("POST", "/api/login/code"): "提交 Telegram 登录验证码",
+    ("POST", "/api/login/password"): "提交 Telegram 两步验证密码",
+    ("POST", "/api/login/cancel"): "取消 Telegram 登录流程",
+    ("POST", "/api/login/reset"): "重置 Telegram 登录流程",
+    ("POST", "/api/runtime/check"): "立即抓取并发送",
+    ("POST", "/api/runtime/pause"): "暂停抓取与发送",
+    ("POST", "/api/runtime/resume"): "恢复抓取与发送",
+    ("POST", "/api/runtime/clear-queue"): "清空待发送队列",
+}
+
+
+def _status_code_value(code: Any) -> int | None:
+    try:
+        return int(str(code).split()[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _web_request_label(method: str, path: str) -> str:
+    label = WEB_REQUEST_LABELS.get((method, path))
+    if label:
+        return label
+    if path.startswith("/assets/"):
+        asset_name = path.rsplit("/", 1)[-1] or path
+        return f"加载静态资源 {asset_name}"
+    if path.startswith("/api/"):
+        return f"调用 Web API {path}"
+    return f"访问 Web 路径 {path}"
+
+
+def _web_request_log_entry(
+    method: str, raw_path: str, code: Any
+) -> tuple[str, str] | None:
+    path = (raw_path or "-").split("?", 1)[0]
+    method = (method or "-").upper()
+    status_code = _status_code_value(code)
+    is_success = status_code is not None and status_code < 400
+
+    if is_success and (
+        path in SILENT_OK_WEB_PATHS
+        or any(path.startswith(prefix) for prefix in SILENT_OK_WEB_PREFIXES)
+    ):
+        return None
+
+    if status_code is None:
+        level = "info"
+        outcome = f"HTTP {code}"
+    elif status_code < 400:
+        level = "info"
+        outcome = f"成功 {status_code}"
+    elif status_code < 500:
+        level = "warning"
+        outcome = f"失败 {status_code}"
+    else:
+        level = "error"
+        outcome = f"异常 {status_code}"
+
+    return (
+        level,
+        f"[WebAdmin] {_web_request_label(method, path)}：{outcome}（{method} {path}）",
+    )
 
 
 class WebAdminError(RuntimeError):
@@ -164,9 +242,20 @@ class WebAdminServer:
 
         class WebAdminRequestHandler(WSGIRequestHandler):
             def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
-                if getattr(self, "path", "").split("?", 1)[0] == "/api/status":
+                entry = _web_request_log_entry(
+                    getattr(self, "command", ""),
+                    getattr(self, "path", ""),
+                    code,
+                )
+                if entry is None:
                     return
-                super().log_request(code, size)
+                level, message = entry
+                if level == "error":
+                    logger.error(message)
+                elif level == "warning":
+                    logger.warning(message)
+                else:
+                    logger.info(message)
 
         app = Flask(
             __name__,
