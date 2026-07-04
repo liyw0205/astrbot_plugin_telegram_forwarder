@@ -1181,32 +1181,6 @@ export function animateTopologyInto(root, { isTyping = false } = {}) {
       { opacity: 1, x: 0, duration: 0.4, stagger: 0.03, ease: "power2.out" }
     );
   }
-
-  // Self-drawing paths: wait two animation frames to ensure the browser has finished layout
-  // so path.getTotalLength() returns the actual layout length rather than 0!
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const paths = root.querySelectorAll(".topology-lines > path");
-      paths.forEach((path) => {
-        const length = path.getTotalLength();
-        if (!length) return; // Skip if hidden or 0 length (handles tab hidden state gracefully)
-
-        window.gsap.killTweensOf(path);
-        path.style.strokeDasharray = `${length} ${length}`;
-        path.style.strokeDashoffset = length;
-        window.gsap.to(path, {
-          strokeDashoffset: 0,
-          duration: 0.6,
-          delay: 0.1,
-          ease: "power2.out",
-          onComplete: () => {
-            path.style.strokeDasharray = "";
-            path.style.strokeDashoffset = "";
-          }
-        });
-      });
-    });
-  });
 }
 
 export function renderTargetTopology() {
