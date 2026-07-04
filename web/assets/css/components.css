@@ -550,6 +550,24 @@
   background-color: var(--primary-soft);
 }
 
+/* 画布列标题：告诉用户左右两列各是什么 */
+.topology-col-label {
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  z-index: 1;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+.topology-col-label-right {
+  left: auto;
+  right: 18px;
+}
+
 .topology-lines {
   position: absolute;
   inset: 0;

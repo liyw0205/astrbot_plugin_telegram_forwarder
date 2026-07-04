@@ -242,8 +242,63 @@ function topologyY(index) {
   return TOPOLOGY_TOP_PADDING + index * TOPOLOGY_ROW_HEIGHT;
 }
 
-function topologyNode(label, meta, side, index, attrs = "", badge = "") {
-  const y = topologyY(index);
+/* —— 拓扑布局：二分图重心（barycenter）排序 ——
+   源节点按其目标的初始位置重心排序，让共享同一 QQ 目标的频道相邻成簇；
+   未连接任何目标的源沉底。这是消除连线交叉的第一步。 */
+function topologySortSources(sourceItems) {
+  const prelimIndex = new Map();
+  sourceItems.forEach((source) => {
+    source.targets.forEach((target) => {
+      const key = String(target || "").trim();
+      if (key && !prelimIndex.has(key)) prelimIndex.set(key, prelimIndex.size);
+    });
+  });
+  return sourceItems
+    .map((source, order) => {
+      const positions = source.targets
+        .map((target) => prelimIndex.get(String(target || "").trim()))
+        .filter((position) => position != null);
+      const barycenter = positions.length
+        ? positions.reduce((sum, position) => sum + position, 0) / positions.length
+        : Number.POSITIVE_INFINITY;
+      return { source, order, barycenter };
+    })
+    .sort((a, b) => a.barycenter - b.barycenter || a.order - b.order)
+    .map((entry) => entry.source);
+}
+
+/* 目标节点垂直位置 = 其全部来源行的重心，再做自上而下的最小间距推压；
+   连线因此变成短而平的扇形，而不是全部斜穿画布汇聚到顶部。 */
+function topologyTargetYLayout(sourceItems, targetIndex, targetCount) {
+  const sums = new Array(targetCount).fill(0);
+  const counts = new Array(targetCount).fill(0);
+  sourceItems.forEach((source, row) => {
+    source.targets.forEach((target) => {
+      const position = targetIndex.get(String(target || "").trim());
+      if (position == null) return;
+      sums[position] += topologyY(row);
+      counts[position] += 1;
+    });
+  });
+  const placed = sums
+    .map((sum, position) => ({
+      position,
+      y: counts[position] ? sum / counts[position] : topologyY(position),
+    }))
+    .sort((a, b) => a.y - b.y || a.position - b.position);
+  let cursor = TOPOLOGY_TOP_PADDING;
+  placed.forEach((item) => {
+    item.y = Math.max(item.y, cursor);
+    cursor = item.y + TOPOLOGY_ROW_HEIGHT;
+  });
+  const ys = new Array(targetCount).fill(TOPOLOGY_TOP_PADDING);
+  placed.forEach((item) => {
+    ys[item.position] = item.y;
+  });
+  return ys;
+}
+
+function topologyNode(label, meta, side, index, attrs = "", badge = "", y = topologyY(index)) {
   const badgeClass = badge ? " has-badge" : "";
   const badgeHtml = badge
     ? `<em class="topology-node-badge" aria-hidden="true">${escapeHtml(badge)}</em>`
@@ -626,7 +681,9 @@ function renderTopologyInto(root, {
       };
     })
     .filter((item) => item.label || item.targets.length);
-  const sourceItems = allSourceItems.filter((source) => topologyMatchesFilter(source, safeFilter) && topologyMatchesQuery(source, query));
+  const sourceItems = topologySortSources(
+    allSourceItems.filter((source) => topologyMatchesFilter(source, safeFilter) && topologyMatchesQuery(source, query)),
+  );
 
   const targetItems = [];
   const targetIndex = new Map();
@@ -649,6 +706,7 @@ function renderTopologyInto(root, {
       targetItems[position].inDegree += 1;
     });
   });
+  const targetYs = topologyTargetYLayout(sourceItems, targetIndex, targetItems.length);
 
   const configuredRefs = configuredChannelRefs();
   const availableChannels = store.state.tgChannels
@@ -701,9 +759,10 @@ function renderTopologyInto(root, {
     return;
   }
 
-  const rowCount = Math.max(sourceItems.length, targetItems.length, 2);
+  const maxTargetY = targetYs.length ? Math.max(...targetYs) : TOPOLOGY_TOP_PADDING;
   const stageHeight = Math.max(
-    TOPOLOGY_TOP_PADDING + (rowCount - 1) * TOPOLOGY_ROW_HEIGHT + TOPOLOGY_BOTTOM_PADDING,
+    TOPOLOGY_TOP_PADDING + Math.max(sourceItems.length - 1, 1) * TOPOLOGY_ROW_HEIGHT + TOPOLOGY_BOTTOM_PADDING,
+    maxTargetY + TOPOLOGY_BOTTOM_PADDING,
     minStageHeight,
   );
   const sourceNodes = sourceItems
@@ -726,6 +785,7 @@ function renderTopologyInto(root, {
         index,
         `${editable ? `draggable="true" data-drag-payload="${topologyDragData("qq", target.key)}"` : ""} data-topology-target-row="${index}"`,
         target.inDegree > 1 ? `${target.inDegree} 源` : "",
+        targetYs[index],
       ),
     ).join("")
     : '<div class="topology-empty topology-empty-target">未选择 QQ 群目标</div>';
@@ -739,7 +799,7 @@ function renderTopologyInto(root, {
         const targetPosition = targetIndex.get(String(target || "").trim());
         if (targetPosition == null) return "";
         const y1 = topologyY(sourceIndex);
-        const y2 = topologyY(targetPosition);
+        const y2 = targetYs[targetPosition];
         const edgeClass = `${source.dedicated ? "dedicated" : "inherited"} ${source.active ? "active" : ""}`;
         const style = source.active ? `style="animation-delay: ${activeDelay}"` : "";
         return `<path class="${edgeClass}" ${style} data-source="${sourceIndex}" data-target="${targetPosition}" marker-end="url(#${markerId})" d="M 28 ${y1} C 42 ${y1}, 58 ${y2}, 72 ${y2}" />`;
@@ -766,6 +826,8 @@ function renderTopologyInto(root, {
     ${palette}
     <div class="topology-canvas" data-topology-scroll="canvas">
       <div class="topology-stage" data-topology-drop-stage style="--topology-height: ${stageHeight}px">
+        <span class="topology-col-label">Telegram 频道</span>
+        <span class="topology-col-label topology-col-label-right">QQ 目标</span>
         <svg class="topology-lines" viewBox="0 0 100 ${stageHeight}" preserveAspectRatio="none" aria-hidden="true">
           <defs>
             <marker id="${markerId}" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
