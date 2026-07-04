@@ -17,8 +17,10 @@ class FakeStorage:
         self.removed: list[tuple[str, list[int]]] = []
         self.retry_updates: list[tuple[str, list[int], dict]] = []
         self.cleared: list[tuple[str, list[int]]] = []
+        self.get_all_pending_calls = 0
 
     def get_all_pending(self) -> list[dict]:
+        self.get_all_pending_calls += 1
         return list(self.pending)
 
     def get_channel_data(self, channel_name: str) -> dict:
@@ -28,7 +30,9 @@ class FakeStorage:
         ]
         return data
 
-    def add_batch_to_pending_queue(self, channel_name: str, messages: list[dict]) -> int:
+    def add_batch_to_pending_queue(
+        self, channel_name: str, messages: list[dict]
+    ) -> int:
         for message in messages:
             self.pending.append({"channel": channel_name, **message})
         return len(messages)
@@ -181,7 +185,9 @@ def load_forwarder_module():
         _register_module("astrbot_plugin_telegram_forwarder.core.senders", __path__=[])
         _register_module("astrbot_plugin_telegram_forwarder.core.filters", __path__=[])
 
-        _register_module("astrbot_plugin_telegram_forwarder.common.storage", Storage=object)
+        _register_module(
+            "astrbot_plugin_telegram_forwarder.common.storage", Storage=object
+        )
         _register_module(
             "astrbot_plugin_telegram_forwarder.common.text_tools",
             normalize_telegram_channel_name=lambda value: str(value).lstrip("@"),
@@ -189,13 +195,15 @@ def load_forwarder_module():
             is_numeric_channel_id=lambda value: str(value).lstrip("-").isdigit(),
         )
         _register_module(
-            "astrbot_plugin_telegram_forwarder.core.client", TelegramClientWrapper=object
+            "astrbot_plugin_telegram_forwarder.core.client",
+            TelegramClientWrapper=object,
         )
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.downloader", MediaDownloader=object
         )
         _register_module(
-            "astrbot_plugin_telegram_forwarder.core.senders.telegram", TelegramSender=object
+            "astrbot_plugin_telegram_forwarder.core.senders.telegram",
+            TelegramSender=object,
         )
         _register_module(
             "astrbot_plugin_telegram_forwarder.core.senders.qq",
@@ -300,7 +308,7 @@ def test_reload_runtime_config_resets_inactive_channels():
     forwarder = forwarder_module.Forwarder.__new__(forwarder_module.Forwarder)
     forwarder.config = {
         "source_channels": [
-            {"channel_username": "demo"},
+            {"channel_username": "@demo"},
             {"channel_username": ""},
             {"channel_username": "other"},
             {},
@@ -317,13 +325,28 @@ def test_reload_runtime_config_resets_inactive_channels():
     forwarder.storage.reset_inactive_channels.assert_called_once_with(["demo", "other"])
 
 
+def test_normalize_target_list_strips_skips_none_and_dedupes():
+    forwarder_module = load_forwarder_module()
+
+    assert forwarder_module.Forwarder._normalize_target_list(
+        ["  g1  ", None, "", "   ", "g1", 123, ("tuple",)]
+    ) == ["g1", "123", "('tuple',)"]
+    assert forwarder_module.Forwarder._normalize_target_list(("g2", " g3 ")) == [
+        "g2",
+        "g3",
+    ]
+    assert forwarder_module.Forwarder._normalize_target_list("g1,g2") == []
+
+
 @pytest.mark.asyncio
 async def test_check_updates_force_bypasses_channel_interval():
     forwarder_module = load_forwarder_module()
     storage = FakeStorage([])
     forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
     forwarder._channel_locks = {}
-    forwarder._channel_last_check = {"demo": forwarder_module.datetime.now().timestamp()}
+    forwarder._channel_last_check = {
+        "demo": forwarder_module.datetime.now().timestamp()
+    }
     forwarder._get_effective_config = lambda channel: {
         "check_interval": 3600,
         "msg_limit": 1,
@@ -343,7 +366,9 @@ async def test_check_updates_force_bypasses_channel_interval():
             )
         ]
     )
-    forwarder._prepare_album_boundaries = AsyncMock(side_effect=lambda channel, msgs, limit: msgs)
+    forwarder._prepare_album_boundaries = AsyncMock(
+        side_effect=lambda channel, msgs, limit: msgs
+    )
     forwarder._is_monitor_matched = MagicMock(return_value=False)
 
     await forwarder.check_updates()
@@ -891,15 +916,74 @@ async def test_send_sorted_messages_in_batches_skips_completed_qq_batch_without_
     sent_batches = forwarder.qq_sender.send.await_args.kwargs["batches"]
     assert [[msg.id for msg in batch] for batch in sent_batches] == [[572]]
     assert (
-        forwarder.qq_sender.send.await_args.kwargs[
-            "completed_target_sessions_by_batch"
-        ]
+        forwarder.qq_sender.send.await_args.kwargs["completed_target_sessions_by_batch"]
         is None
     )
     assert set(summary.acked_batch_indexes) == {0, 1}
     assert summary.failed_batch_indexes == ()
     assert summary.deferred_batch_indexes == ()
     assert summary.completed_target_sessions[0] == ("target-a", "target-b")
+
+
+@pytest.mark.asyncio
+async def test_send_sorted_messages_in_batches_indexes_pending_once_for_completed_targets():
+    forwarder_module = load_forwarder_module()
+    storage = FakeStorage(
+        [
+            {
+                "channel": "demo",
+                "id": 581,
+                "time": 1,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+                "completed_qq_targets": ["target-a", "target-b"],
+            },
+            {
+                "channel": "demo",
+                "id": 582,
+                "time": 2,
+                "grouped_id": None,
+                "is_cold_start": False,
+                "is_monitored": False,
+                "completed_qq_targets": ["target-a"],
+            },
+        ]
+    )
+    forwarder = make_forwarder(forwarder_module, storage, strict_ack=True)
+    forwarder.config["forward_config"]["qq_send_logical_unit_budget"] = 1
+    forwarder._get_effective_config = lambda channel: {
+        "priority": 0,
+        "forward_types": ["文字"],
+        "max_file_size": 0,
+        "filter_keywords": [],
+        "filter_regex_patterns": [],
+        "effective_target_qq_sessions": ["target-a", "target-b"],
+        "has_exclusive_qq_sessions": False,
+    }
+    forwarder.qq_sender = MagicMock()
+    forwarder.qq_sender.send = AsyncMock(
+        return_value=QQSendSummary(
+            acked_batch_indexes=(0,),
+            failed_batch_indexes=(),
+            deferred_batch_indexes=(),
+            error_types={},
+            target_sessions=("target-a", "target-b"),
+            target_sessions_by_batch={0: ("target-a", "target-b")},
+            completed_target_sessions={0: ("target-a", "target-b")},
+        )
+    )
+    forwarder.tg_sender = MagicMock()
+    forwarder._get_display_name = AsyncMock(return_value="demo")
+
+    await forwarder._send_sorted_messages_in_batches(
+        [
+            ([type("Msg", (), {"id": 581})()], "demo"),
+            ([type("Msg", (), {"id": 582})()], "demo"),
+        ]
+    )
+
+    assert storage.get_all_pending_calls == 1
 
 
 @pytest.mark.asyncio

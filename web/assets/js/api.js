@@ -17,20 +17,37 @@ function bridgeEndpoint(path) {
   return value.replace(/^\/+/, "");
 }
 
-async function bridgeRequest(path, method = "GET", body = null) {
-  const bridge = dashboardBridge();
-  if (!bridge) throw new Error("AstrBot Dashboard bridge is not available.");
-  await bridge.ready();
-  const endpoint = bridgeEndpoint(path);
-  if (method.toUpperCase() === "GET") {
-    return bridge.apiGet(endpoint, body || {});
+async function withTimeout(promise, timeout) {
+  if (!timeout || timeout <= 0) return promise;
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error("请求超时，请稍后重试。")), timeout);
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  return bridge.apiPost(endpoint, body || {});
+}
+
+async function bridgeRequest(path, method = "GET", body = null, timeout = 30000) {
+  return withTimeout((async () => {
+    const bridge = dashboardBridge();
+    if (!bridge) throw new Error("AstrBot Dashboard bridge is not available.");
+    await bridge.ready();
+    const endpoint = bridgeEndpoint(path);
+    if (method.toUpperCase() === "GET") {
+      return bridge.apiGet(endpoint, body || {});
+    }
+    return bridge.apiPost(endpoint, body || {});
+  })(), timeout);
 }
 
 export async function apiRequest(path, method = 'GET', body = null, timeout = 30000) {
   if (isDashboardPage()) {
-    return bridgeRequest(path, method, body);
+    return bridgeRequest(path, method, body, timeout);
   }
 
   const headers = {

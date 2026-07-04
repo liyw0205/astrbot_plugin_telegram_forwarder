@@ -1355,6 +1355,8 @@ class WebAdminServer:
         return {"message": "已进入重新登录流程，当前已登录账号会保留到新账号登录成功。"}
 
     async def runtime_check(self) -> dict[str, Any]:
+        if getattr(self.plugin.command_handler, "_paused", False):
+            raise WebAdminError("当前已暂停抓取与发送，请先恢复运行。")
         self.plugin.forwarder._stopping = False
         operation = self._new_runtime_operation(
             "立即抓取发送",

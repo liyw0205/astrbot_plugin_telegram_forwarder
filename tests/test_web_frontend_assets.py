@@ -309,3 +309,56 @@ def test_topology_nodes_expose_context_menu_removal_actions() -> None:
         assert ".topology-context-menu.danger-only" in css_text
         assert "@keyframes topology-context-in" in css_text
         assert ".topology-context-menu button.danger::before" in css_text
+
+
+def test_topology_target_removal_imports_selector_helpers() -> None:
+    import_re = re.compile(
+        r"import\s*\{(?P<names>[^}]+)\}\s*from\s*['\"]\.\/ui_selector\.js['\"]",
+        re.S,
+    )
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "js" / "ui_topology.js").read_text(encoding="utf-8")
+        selector_imports = " ".join(
+            match.group("names") for match in import_re.finditer(text)
+        )
+
+        assert "joinList" in selector_imports
+        assert "renderQQTargetSelector" in selector_imports
+        assert "removeTopologyTarget" in text
+
+
+def test_forward_config_exposes_file_direct_link_base_url() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "js" / "config.js").read_text(encoding="utf-8")
+
+        assert '"file_direct_link_base_url"' in text
+        assert "普通文件直链基址" in text
+
+
+def test_status_polling_does_not_rerender_config_surfaces() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "app.js").read_text(encoding="utf-8")
+
+        assert "let lastRenderedConfig = null;" in text
+        assert "state.config !== lastRenderedConfig" in text
+        assert "lastRenderedConfig = state.config;" in text
+
+
+def test_raw_json_parse_failure_rejects_action() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "app.js").read_text(encoding="utf-8")
+
+        assert "JSON 格式错误" in text
+        assert re.search(
+            r"catch \(error\) \{\s*showToast\(`JSON 格式错误：\$\{error\.message\}`\);\s*throw error;",
+            text,
+        )
+
+
+def test_dashboard_bridge_api_preserves_request_timeout() -> None:
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "js" / "api.js").read_text(encoding="utf-8")
+
+        assert "function withTimeout" in text
+        assert "Promise.race" in text
+        assert "bridgeRequest(path, method, body, timeout)" in text

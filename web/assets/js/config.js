@@ -47,6 +47,7 @@ export const FORWARD_GROUPS = [
         defaultValue: "直链优先，失败转压缩包",
       },
       { key: "apk_direct_link_base_url", label: "APK 直链基址", type: "text", defaultValue: "" },
+      { key: "file_direct_link_base_url", label: "普通文件直链基址", type: "text", defaultValue: "" },
       { key: "qq_send_logical_unit_budget", label: "QQ 单轮发送预算", type: "int", defaultValue: 0 },
       { key: "qq_target_fail_fast_consecutive_failures", label: "QQ 连续失败快停阈值", type: "int", defaultValue: 3 },
       { key: "target_circuit_fail_threshold", label: "QQ 目标熔断阈值", type: "int", defaultValue: 3 },

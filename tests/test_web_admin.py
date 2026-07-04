@@ -179,6 +179,7 @@ def web_admin(web_admin_module):
             }
         ),
         client_wrapper=SimpleNamespace(is_authorized=MagicMock(return_value=False)),
+        command_handler=SimpleNamespace(_paused=False),
         activate_runtime_after_authorized=AsyncMock(),
     )
     server = web_admin_module.WebAdminServer(plugin, loop)
@@ -382,9 +383,7 @@ def test_qq_groups_prefers_aiocqhttp_adapter_when_available(web_admin, monkeypat
         "AiocqhttpAdapter",
         PreferredQQPlatform,
     )
-    duck_client = FakeQQClient(
-        [{"group_id": 12345, "group_name": "Duck Typed Group"}]
-    )
+    duck_client = FakeQQClient([{"group_id": 12345, "group_name": "Duck Typed Group"}])
     preferred_client = FakeQQClient(
         [{"group_id": 12345, "group_name": "Adapter Group"}]
     )
@@ -485,9 +484,7 @@ def test_tg_channels_returns_dialog_channels(web_admin):
     web_admin.plugin.client_wrapper.is_authorized = MagicMock(return_value=True)
     client = web_admin.server.app.test_client()
 
-    response = client.get(
-        "/api/tg/channels", headers={"X-Admin-Token": "secret-token"}
-    )
+    response = client.get("/api/tg/channels", headers={"X-Admin-Token": "secret-token"})
     payload = response.get_json()["data"]
 
     assert response.status_code == 200
@@ -521,9 +518,7 @@ def test_tg_channels_refresh_forces_dialog_reload(web_admin):
     client = web_admin.server.app.test_client()
 
     client.get("/api/tg/channels", headers={"X-Admin-Token": "secret-token"})
-    client.post(
-        "/api/tg/channels/refresh", headers={"X-Admin-Token": "secret-token"}
-    )
+    client.post("/api/tg/channels/refresh", headers={"X-Admin-Token": "secret-token"})
 
     assert tg_client.calls == 2
 
@@ -535,9 +530,7 @@ def test_tg_channels_handles_unauthorized_client(web_admin):
     web_admin.plugin.client_wrapper.is_authorized = MagicMock(return_value=False)
     client = web_admin.server.app.test_client()
 
-    response = client.get(
-        "/api/tg/channels", headers={"X-Admin-Token": "secret-token"}
-    )
+    response = client.get("/api/tg/channels", headers={"X-Admin-Token": "secret-token"})
     payload = response.get_json()["data"]
 
     assert response.status_code == 200
@@ -552,9 +545,7 @@ def test_tg_channels_keeps_configured_fallback(web_admin):
     ]
     client = web_admin.server.app.test_client()
 
-    response = client.get(
-        "/api/tg/channels", headers={"X-Admin-Token": "secret-token"}
-    )
+    response = client.get("/api/tg/channels", headers={"X-Admin-Token": "secret-token"})
     payload = response.get_json()["data"]
 
     assert payload["available"] is False
@@ -604,8 +595,7 @@ def test_save_config_preserves_manual_tg_channel_refs(web_admin):
 
     assert response.status_code == 200
     assert [
-        item["channel_username"]
-        for item in web_admin.plugin.config["source_channels"]
+        item["channel_username"] for item in web_admin.plugin.config["source_channels"]
     ] == ["https://t.me/manual_channel", "-100987654321"]
 
 
@@ -660,6 +650,23 @@ async def test_runtime_check_forces_fetch_then_sends(web_admin):
     assert web_admin.server._runtime_operation_snapshots()[0]["status"] == "success"
 
 
+@pytest.mark.asyncio
+async def test_runtime_check_rejects_when_paused(web_admin):
+    web_admin.plugin.command_handler._paused = True
+    web_admin.plugin.forwarder = SimpleNamespace(
+        _stopping=True,
+        check_updates=AsyncMock(),
+        send_pending_messages=AsyncMock(),
+    )
+
+    with pytest.raises(web_admin.module.WebAdminError):
+        await web_admin.server.runtime_check()
+
+    assert web_admin.plugin.forwarder._stopping is True
+    web_admin.plugin.forwarder.check_updates.assert_not_awaited()
+    web_admin.plugin.forwarder.send_pending_messages.assert_not_awaited()
+
+
 def test_static_assets_serving(web_admin):
     client = web_admin.server.app.test_client()
 
@@ -689,4 +696,6 @@ def test_static_assets_serving(web_admin):
         "/assets/js/ui_topology.js",
     ]
     for path in paths:
-        assert client.get(path).status_code == 200, f"Static asset {path} failed to resolve"
+        assert client.get(path).status_code == 200, (
+            f"Static asset {path} failed to resolve"
+        )

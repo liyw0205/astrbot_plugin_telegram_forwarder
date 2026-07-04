@@ -1226,6 +1226,7 @@ select {
      改卡片宽度/边距时连线端点自动跟随，避免再出现连线穿透卡片 */
   --topology-node-width: min(30%, 270px);
   --topology-node-inset: 18px;
+
   width: 100%;
   min-width: 0;
   height: var(--topology-height);

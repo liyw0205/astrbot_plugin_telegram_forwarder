@@ -128,7 +128,7 @@ async function saveRawConfig() {
     parsed = JSON.parse(els.rawConfigInput.value);
   } catch (error) {
     showToast(`JSON 格式错误：${error.message}`);
-    return;
+    throw error;
   }
   const result = await apiRequest("/api/config", "POST", { config: parsed });
   store.updateState({ config: result.config });
@@ -356,10 +356,13 @@ async function boot() {
   setCollectFormsCallback(collectForms);
   setRenderAllCallback(renderAll);
 
+  let lastRenderedConfig = null;
+
   // Register main router to subscribe to store updates
   store.subscribe((state) => {
-    // Whenever status or config updates in store, re-run selectors rendering
-    if (state.config && els.defaultQQSelector && els.targetQQInput) {
+    // Selector and topology rendering is expensive; status polling must not trigger it.
+    if (state.config && state.config !== lastRenderedConfig && els.defaultQQSelector && els.targetQQInput) {
+      lastRenderedConfig = state.config;
       renderTGChannelSelector({
         root: els.targetChannelSelector,
         manualInput: els.targetChannelInput,

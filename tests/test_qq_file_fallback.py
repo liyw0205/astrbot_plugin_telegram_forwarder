@@ -128,9 +128,11 @@ class TestIsApkComponent:
         for ext in (".xapk", ".apkm", ".apks"):
             assert m._is_apk_component(_file_component(m, name=f"app{ext}")) is True
 
-    def test_apk_in_source_path_only(self):
+    def test_apk_in_source_path_only(self, tmp_path):
         m = load_fallback_module()
-        comp = _file_component(m, name="renamed.txt", source_path="/tmp/real.apk")
+        comp = _file_component(
+            m, name="renamed.txt", source_path=str(tmp_path / "real.apk")
+        )
         assert m._is_apk_component(comp) is True
 
     def test_non_apk_returns_false(self):
@@ -342,14 +344,15 @@ class TestHandleApkFileSendFailure:
         send_fn.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_link_mode_sends_direct_link(self):
+    async def test_link_mode_sends_direct_link(self, tmp_path):
         m = load_fallback_module()
         send_fn = AsyncMock()
+        source = tmp_path / "app.apk"
         ok = await m.handle_apk_file_send_failure(
             policy=m.ApkFallbackPolicy(
                 mode="link", direct_link_base_url="https://x.com/dl/"
             ),
-            component=_file_component(m, name="app.apk", file="/tmp/app.apk"),
+            component=_file_component(m, name="app.apk", file=str(source)),
             error=Exception("rich media transfer failed"),
             batch_data={"batch_index": 0, "nodes_data": [], "local_files": []},
             unified_msg_origin="umo",
@@ -364,15 +367,16 @@ class TestHandleApkFileSendFailure:
         assert send_fn.await_args.kwargs["send_kind"] == "fallback_link"
 
     @pytest.mark.asyncio
-    async def test_link_mode_reraises_when_direct_link_fails(self):
+    async def test_link_mode_reraises_when_direct_link_fails(self, tmp_path):
         m = load_fallback_module()
         send_fn = AsyncMock(side_effect=RuntimeError("boom"))
+        source = tmp_path / "app.apk"
         with pytest.raises(RuntimeError):
             await m.handle_apk_file_send_failure(
                 policy=m.ApkFallbackPolicy(
                     mode="link", direct_link_base_url="https://x.com/dl/"
                 ),
-                component=_file_component(m, name="app.apk", file="/tmp/app.apk"),
+                component=_file_component(m, name="app.apk", file=str(source)),
                 error=Exception("rich media transfer failed"),
                 batch_data={"batch_index": 0, "nodes_data": []},
                 unified_msg_origin="umo",

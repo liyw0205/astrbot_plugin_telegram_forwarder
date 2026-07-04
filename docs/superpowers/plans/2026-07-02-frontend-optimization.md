@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: 新增静态资源路由测试
+## Task 1: 新增静态资源路由测试
 
 **Files:**
 - Modify: `tests/test_web_admin.py`
@@ -60,7 +60,7 @@ git commit -m "test: add static assets route tests"
 
 ---
 
-### Task 2: 拆分 CSS 样式模块
+## Task 2: 拆分 CSS 样式模块
 
 **Files:**
 - Create: `web/assets/css/variables.css`
@@ -123,7 +123,7 @@ git commit -m "style: split style.css into modular CSS files"
 
 ---
 
-### Task 3: 创建基础 JS 依赖模块 (api.js, store.js, utils.js)
+## Task 3: 创建基础 JS 依赖模块 (api.js, store.js, utils.js)
 
 **Files:**
 - Create: `web/assets/js/utils.js`
@@ -227,7 +227,7 @@ git commit -m "feat: add js base modules (utils, store, api)"
 
 ---
 
-### Task 4: 创建功能 UI 模块 (ui_overview, ui_login, ui_selector, ui_channels)
+## Task 4: 创建功能 UI 模块 (ui_overview, ui_login, ui_selector, ui_channels)
 
 **Files:**
 - Create: `web/assets/js/ui_overview.js`
@@ -260,7 +260,7 @@ git commit -m "feat: extract web UI rendering modules"
 
 ---
 
-### Task 5: 重构主 Entrypoint 与 HTML 模块化集成
+## Task 5: 重构主 Entrypoint 与 HTML 模块化集成
 
 **Files:**
 - Modify: `web/assets/app.js`
@@ -308,7 +308,7 @@ git commit -m "feat: complete Phase 1 codebase modularization"
 
 ---
 
-### Task 6: 第二阶段 - 实现 Theme A 智能明暗模式支持
+## Task 6: 第二阶段 - 实现 Theme A 智能明暗模式支持
 
 **Files:**
 - Modify: `web/assets/css/variables.css`
@@ -357,7 +357,7 @@ git commit -m "style: support auto dark mode via prefers-color-scheme"
 
 ---
 
-### Task 7: 第二阶段 - 优化“总览”指标卡片与趋势
+## Task 7: 第二阶段 - 优化“总览”指标卡片与趋势
 
 **Files:**
 - Modify: `web/assets/js/ui_overview.js`
@@ -376,7 +376,7 @@ git commit -m "style: enhance overview metrics visual status"
 
 ---
 
-### Task 8: 第三阶段 - 实现 Stepper 登录引导组件
+## Task 8: 第三阶段 - 实现 Stepper 登录引导组件
 
 **Files:**
 - Modify: `web/index.html`
@@ -409,7 +409,7 @@ git commit -m "feat: implement unified login Stepper UI"
 
 ---
 
-### Task 9: 第三阶段 - 实现带模糊过滤的群组/频道选择器
+## Task 9: 第三阶段 - 实现带模糊过滤的群组/频道选择器
 
 **Files:**
 - Modify: `web/assets/js/ui_selector.js`
@@ -432,7 +432,7 @@ git commit -m "feat: add real-time fuzzy search filter for selector"
 
 ---
 
-### Task 10: 最终自检与清理
+## Task 10: 最终自检与清理
 
 - [ ] **Step 1: 运行全量测试**
 

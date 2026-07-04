@@ -1,7 +1,16 @@
 import { store } from './store.js';
 import { els, showToast } from './context.js';
 import { defaultChannel, renderChannels } from './ui_channels.js';
-import { renderSelectorChip, splitList, uniqueList, groupByTarget, groupIdFromTarget, channelTitleUI } from './ui_selector.js';
+import {
+  renderSelectorChip,
+  splitList,
+  joinList,
+  uniqueList,
+  groupByTarget,
+  groupIdFromTarget,
+  channelTitleUI,
+  renderQQTargetSelector,
+} from './ui_selector.js';
 import { bindLiveSearchInput, escapeHtml, channelKey, motionEnabled } from './utils.js';
 
 export const TOPOLOGY_FILTERS = new Set(["all", "active", "dedicated", "inherited", "unlinked"]);

@@ -67,12 +67,7 @@ class Forwarder:
         self._cleanup_orphaned_files()
 
         # 启动时重置不在配置中的频道的 last_post_id
-        source_channels = config.get("source_channels", [])
-        active_channels = [
-            c.get("channel_username")
-            for c in source_channels
-            if c.get("channel_username")
-        ]
+        active_channels = self._active_source_channel_names()
         logger.debug(f"[Capture] 当前活跃监控频道列表: {active_channels}")
         self.storage.reset_inactive_channels(active_channels)
 
@@ -98,14 +93,22 @@ class Forwarder:
         """刷新依赖配置快照的运行时组件。"""
         self.message_filter = MessageFilter(self.config)
         self.message_merger = MessageMerger(self.config)
-        source_channels = self.config.get("source_channels", [])
-        active_channels = [
-            c.get("channel_username")
-            for c in source_channels
-            if c.get("channel_username")
-        ]
+        active_channels = self._active_source_channel_names()
         self.storage.reset_inactive_channels(active_channels)
         logger.info("[Forwarder] 运行时配置组件已刷新。")
+
+    def _active_source_channel_names(self) -> list[str]:
+        """Return normalized active source channel names from current config."""
+        active_channels = []
+        for channel_cfg in self.config.get("source_channels", []):
+            if not isinstance(channel_cfg, dict):
+                continue
+            channel_name = normalize_telegram_channel_name(
+                channel_cfg.get("channel_username", "")
+            )
+            if channel_name:
+                active_channels.append(channel_name)
+        return active_channels
 
     def _get_channel_lock(self, channel_name: str) -> asyncio.Lock:
         if channel_name not in self._channel_locks:
@@ -956,9 +959,19 @@ class Forwarder:
 
     @staticmethod
     def _normalize_target_list(targets: object) -> list[str]:
-        if not isinstance(targets, list):
+        if isinstance(targets, str) or not isinstance(targets, (list, tuple, set)):
             return []
-        return [str(target) for target in targets if str(target)]
+        result = []
+        seen = set()
+        for target in targets:
+            if target is None:
+                continue
+            value = str(target).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
 
     @classmethod
     def _completed_qq_targets_for_items(cls, items: list[dict]) -> list[str]:
@@ -1000,14 +1013,24 @@ class Forwarder:
         return any(len(meta.get("target_sessions", [])) > 1 for meta in batch_meta)
 
     def _completed_qq_targets_for_batch(
-        self, src_channel: str, msgs: list
+        self,
+        src_channel: str,
+        msgs: list,
+        pending_items_by_key: dict[tuple[str, int], list[dict]] | None = None,
     ) -> list[str]:
         msg_ids = {msg.id for msg in msgs}
-        pending_items = [
-            item
-            for item in self.storage.get_all_pending()
-            if item["channel"] == src_channel and item["id"] in msg_ids
-        ]
+        if pending_items_by_key is not None:
+            pending_items = []
+            for msg_id in msg_ids:
+                pending_items.extend(
+                    pending_items_by_key.get((src_channel, msg_id), [])
+                )
+        else:
+            pending_items = [
+                item
+                for item in self.storage.get_all_pending()
+                if item["channel"] == src_channel and item["id"] in msg_ids
+            ]
         return self._completed_qq_targets_for_items(pending_items)
 
     async def send_pending_messages(
@@ -1573,10 +1596,10 @@ class Forwarder:
                     )
             finally:
                 effective_strict_ack = False
-                if self._queue_clear_stale(clear_generation):
+                should_writeback = not self._queue_clear_stale(clear_generation)
+                if not should_writeback:
                     logger.info("[Send] 队列清空期间丢弃本轮发送结果。")
-                    return
-                if send_summary is not None:
+                if should_writeback and send_summary is not None:
                     attempted_at = datetime.now().timestamp()
                     strict_ack = global_cfg.get(
                         "send_result_strict_ack", False
@@ -1790,6 +1813,9 @@ class Forwarder:
             qq_allowed_count = 0
             completed_qq_targets_by_batch: dict[int, list[str]] = {}
             completed_target_sessions_by_batch: dict[int, tuple[str, ...]] = {}
+            pending_items_by_key: dict[tuple[str, int], list[dict]] = defaultdict(list)
+            for item in self.storage.get_all_pending():
+                pending_items_by_key[(item["channel"], item["id"])].append(item)
 
             for batch_index, (msgs, src_channel) in enumerate(batches_with_channel):
                 effective_cfg = self._get_effective_config(src_channel)
@@ -1799,7 +1825,7 @@ class Forwarder:
                 if not target_sessions:
                     continue
                 completed_targets = self._completed_qq_targets_for_batch(
-                    src_channel, msgs
+                    src_channel, msgs, pending_items_by_key
                 )
                 if completed_targets:
                     completed_qq_targets_by_batch[batch_index] = completed_targets

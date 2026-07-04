@@ -41,22 +41,39 @@ function bridgePayload(payload) {
   return payload || {};
 }
 
-async function bridgeRequest(path, method = "GET", body = null) {
-  const bridge = await waitForDashboardBridge();
-  await bridge.ready();
-  const endpoint = bridgeEndpoint(path);
-  let payload;
-  if (method.toUpperCase() === "GET") {
-    payload = await bridge.apiGet(endpoint, body || {});
-  } else {
-    payload = await bridge.apiPost(endpoint, body || {});
+async function withTimeout(promise, timeout) {
+  if (!timeout || timeout <= 0) return promise;
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error("请求超时，请稍后重试。")), timeout);
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  return bridgePayload(payload);
+}
+
+async function bridgeRequest(path, method = "GET", body = null, timeout = 30000) {
+  return withTimeout((async () => {
+    const bridge = await waitForDashboardBridge();
+    await bridge.ready();
+    const endpoint = bridgeEndpoint(path);
+    let payload;
+    if (method.toUpperCase() === "GET") {
+      payload = await bridge.apiGet(endpoint, body || {});
+    } else {
+      payload = await bridge.apiPost(endpoint, body || {});
+    }
+    return bridgePayload(payload);
+  })(), timeout);
 }
 
 export async function apiRequest(path, method = 'GET', body = null, timeout = 30000) {
   if (isDashboardPage()) {
-    return bridgeRequest(path, method, body);
+    return bridgeRequest(path, method, body, timeout);
   }
 
   const headers = {
