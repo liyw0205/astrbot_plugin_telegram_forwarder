@@ -1,7 +1,8 @@
 {
   "pages": {
     "dashboard": {
-      "title": "电报搬运工控制台"
+      "title": "电报搬运工控制台",
+      "description": "在 AstrBot Dashboard 内管理 Telegram 到 QQ 的转发关系、运行状态和配置。"
     }
   }
 }

@@ -12,8 +12,22 @@ export function isDashboardPage() {
 
 function bridgeEndpoint(path) {
   const value = String(path || "").trim();
-  if (value.startsWith(LEGACY_API_PREFIX)) return value.slice(LEGACY_API_PREFIX.length);
-  return value.replace(/^\/+/, "");
+  if (value.startsWith(LEGACY_API_PREFIX)) {
+    const legacyEndpoint = value.slice(LEGACY_API_PREFIX.length);
+    return `page/${legacyEndpoint}`;
+  }
+  const endpoint = value.replace(/^\/+/, "");
+  return endpoint.startsWith("page/") ? endpoint : `page/${endpoint}`;
+}
+
+function bridgePayload(payload) {
+  if (payload && typeof payload === "object" && payload.ok === false) {
+    throw new Error(payload.message || "Dashboard Page API request failed.");
+  }
+  if (payload && typeof payload === "object" && payload.ok === true && "data" in payload) {
+    return payload.data || {};
+  }
+  return payload || {};
 }
 
 async function bridgeRequest(path, method = "GET", body = null) {
@@ -21,10 +35,13 @@ async function bridgeRequest(path, method = "GET", body = null) {
   if (!bridge) throw new Error("AstrBot Dashboard bridge is not available.");
   await bridge.ready();
   const endpoint = bridgeEndpoint(path);
+  let payload;
   if (method.toUpperCase() === "GET") {
-    return bridge.apiGet(endpoint, body || {});
+    payload = await bridge.apiGet(endpoint, body || {});
+  } else {
+    payload = await bridge.apiPost(endpoint, body || {});
   }
-  return bridge.apiPost(endpoint, body || {});
+  return bridgePayload(payload);
 }
 
 export async function apiRequest(path, method = 'GET', body = null, timeout = 30000) {

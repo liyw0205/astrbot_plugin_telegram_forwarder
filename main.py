@@ -138,7 +138,7 @@ class Main(star.Star):
         self._register_dashboard_web_apis()
 
     def _register_dashboard_web_apis(self) -> None:
-        routes = [
+        legacy_routes = [
             ("auth/check", self.dashboard_auth_check, ["POST"], "验证 Dashboard Page 访问"),
             ("status", self.dashboard_status, ["GET"], "读取运行状态"),
             ("config", self.dashboard_get_config, ["GET"], "读取配置"),
@@ -177,9 +177,20 @@ class Main(star.Star):
                 "清空待发送队列",
             ),
         ]
-        for route, handler, methods, desc in routes:
+        page_routes = [
+            ("dashboard", self.dashboard_page_dashboard, ["GET"], "读取 Dashboard Page 聚合数据"),
+            *legacy_routes,
+        ]
+        for route, handler, methods, desc in legacy_routes:
             self.context.register_web_api(
                 f"/{PLUGIN_NAME}/{route}",
+                handler,
+                methods,
+                desc,
+            )
+        for route, handler, methods, desc in page_routes:
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/page/{route}",
                 handler,
                 methods,
                 desc,
@@ -219,6 +230,51 @@ class Main(star.Star):
         except Exception as exc:
             logger.error(f"[DashboardPage] API 调用失败: {exc}", exc_info=True)
             return self._dashboard_error(exc)
+
+    async def _dashboard_section(self, name: str, operation, default, errors: dict):
+        try:
+            data = await operation()
+            return default if data is None else data
+        except Exception as exc:
+            logger.warning(
+                f"[DashboardPage] {name} 数据加载失败: {exc}",
+                exc_info=True,
+            )
+            errors[name] = str(exc)
+            return default
+
+    async def dashboard_page_dashboard(self):
+        server = self._ensure_web_admin_server()
+        errors = {}
+        status, config_data, qq_groups, tg_channels = await asyncio.gather(
+            self._dashboard_section("status", server.get_status, {}, errors),
+            self._dashboard_section("config", server.get_config, {"config": {}}, errors),
+            self._dashboard_section(
+                "qq_groups",
+                server.list_qq_groups,
+                {"groups": [], "available": False, "message": "QQ 群列表加载失败。"},
+                errors,
+            ),
+            self._dashboard_section(
+                "tg_channels",
+                server.list_tg_channels,
+                {"channels": [], "available": False, "message": "Telegram 频道列表加载失败。"},
+                errors,
+            ),
+        )
+        return self._dashboard_ok(
+            {
+                "status": status if isinstance(status, dict) else {},
+                "config": (
+                    config_data.get("config", {})
+                    if isinstance(config_data, dict)
+                    else {}
+                ),
+                "qqGroups": qq_groups if isinstance(qq_groups, dict) else {},
+                "tgChannels": tg_channels if isinstance(tg_channels, dict) else {},
+                "errors": errors,
+            }
+        )
 
     async def dashboard_auth_check(self):
         return self._dashboard_ok({"authorized": True})

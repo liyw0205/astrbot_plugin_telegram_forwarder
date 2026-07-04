@@ -14,6 +14,7 @@ IMPORT_RE = re.compile(r"""^\s*import\s+(?:[^'"]+\s+from\s+)?['"](?P<path>\.{1,2
 
 def test_dashboard_plugin_page_entry_exists() -> None:
     assert (PAGE_ROOT / "index.html").is_file()
+    assert (PAGE_ROOT / "_page.json").is_file()
 
 
 def test_dashboard_plugin_page_skips_legacy_token_auth() -> None:
@@ -23,8 +24,8 @@ def test_dashboard_plugin_page_skips_legacy_token_auth() -> None:
     assert 'id="authForm"' not in text
     assert 'id="tokenInput"' not in text
     assert "访问 Token" not in text.split('id="appShell"', 1)[0]
-    assert 'href="./assets/style.css"' in text
-    assert 'src="./assets/app.js"' in text
+    assert 'href="./assets/style.css?v=20260704-ui-topology"' in text
+    assert 'src="./assets/app.js?v=20260704-ui-topology"' in text
     assert 'href="/assets/style.css"' not in text
     assert 'src="/assets/app.js"' not in text
 
@@ -33,7 +34,7 @@ def test_dashboard_plugin_page_loads_bridge_before_app() -> None:
     text = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
 
     bridge_pos = text.index('src="/api/plugin/page/bridge-sdk.js"')
-    app_pos = text.index('src="./assets/app.js"')
+    app_pos = text.index('src="./assets/app.js?v=20260704-ui-topology"')
     assert bridge_pos < app_pos
 
 
@@ -42,6 +43,7 @@ def test_dashboard_plugin_page_title_i18n_exists() -> None:
     for locale in ("zh-CN", "en-US"):
         payload = json.loads((i18n_root / f"{locale}.json").read_text(encoding="utf-8"))
         assert payload["pages"]["dashboard"]["title"]
+        assert payload["pages"]["dashboard"]["description"]
 
 
 def test_frontend_relative_module_imports_resolve_for_all_entrypoints() -> None:
@@ -63,8 +65,38 @@ def test_dashboard_page_uses_bridge_compatible_request_layer() -> None:
     text = (PAGE_ASSETS / "js" / "api.js").read_text(encoding="utf-8")
 
     assert "window.AstrBotPluginPage" in text
+    assert 'return `page/${legacyEndpoint}`' in text
     assert "bridge.apiGet(endpoint" in text
     assert "bridge.apiPost(endpoint" in text
+
+
+def test_dashboard_page_has_visible_bridge_failure_state() -> None:
+    context_text = (PAGE_ASSETS / "js" / "context.js").read_text(encoding="utf-8")
+    app_text = (PAGE_ASSETS / "app.js").read_text(encoding="utf-8")
+
+    assert "renderDashboardLoadError" in context_text
+    assert "Dashboard 插件页加载失败" in context_text
+    assert "data-dashboard-load-error" in context_text
+    assert "catch (error)" in app_text
+    assert "renderDashboardLoadError(error)" in app_text
+
+
+def test_dashboard_page_boot_uses_aggregate_page_api() -> None:
+    context_text = (PAGE_ASSETS / "js" / "context.js").read_text(encoding="utf-8")
+
+    assert 'apiRequest("/api/dashboard")' in context_text
+    assert "dashboardPayload.status" in context_text
+    assert "dashboardPayload.errors" in context_text
+
+
+def test_dashboard_backend_registers_page_api_namespace() -> None:
+    text = (ROOT / "main.py").read_text(encoding="utf-8")
+
+    assert '("dashboard", self.dashboard_page_dashboard' in text
+    assert 'f"/{PLUGIN_NAME}/page/{route}"' in text
+    assert "async def dashboard_page_dashboard" in text
+    assert '"qqGroups": qq_groups' in text
+    assert '"tgChannels": tg_channels' in text
 
 
 def test_dashboard_page_stylesheet_is_self_contained() -> None:
@@ -87,26 +119,33 @@ def test_legacy_web_relative_module_imports_resolve() -> None:
 
 
 def test_topology_stage_drop_does_not_add_qq_payload_as_default_target() -> None:
-    text = (WEB_ASSETS / "app.js").read_text(encoding="utf-8")
+    for asset_root in (WEB_ASSETS, PAGE_ASSETS):
+        text = (asset_root / "app.js").read_text(encoding="utf-8")
 
-    assert 'payload.type === "tg"' in text
-    assert 'payload.type === "qq"' in text
-    assert "addTopologyDefaultTarget" not in text
-    assert "请将 QQ 群拖到左侧 Telegram 频道节点上建立专属关系。" in text
+        assert 'payload.type === "tg"' in text
+        assert 'payload.type === "qq"' in text
+        assert "addTopologyDefaultTarget" not in text
+        assert "请将 QQ 群拖到左侧 Telegram 频道节点上建立专属关系。" in text
 
 
 def test_topology_nodes_expose_context_menu_removal_actions() -> None:
-    app_text = (WEB_ASSETS / "app.js").read_text(encoding="utf-8")
-    css_text = (WEB_ASSETS / "css" / "components.css").read_text(encoding="utf-8")
+    targets = [
+        (WEB_ASSETS / "app.js", WEB_ASSETS / "css" / "components.css"),
+        (PAGE_ASSETS / "app.js", PAGE_ASSETS / "style.css"),
+    ]
 
-    assert 'addEventListener("contextmenu"' in app_text
-    assert "removeTopologyChannel(index)" in app_text
-    assert "removeTopologyTarget(node.dataset.topologyTargetKey)" in app_text
-    assert 'data-topology-target-key="${escapeHtml(target.key)}"' in app_text
-    assert 'document.addEventListener("pointermove", onPointerMove)' in app_text
-    assert "anchorNode.contains(target) || menu.contains(target)" in app_text
-    assert 'menu.classList.add("danger-only")' in app_text
-    assert ".topology-context-menu" in css_text
-    assert ".topology-context-menu.danger-only" in css_text
-    assert "@keyframes topology-context-in" in css_text
-    assert ".topology-context-menu button.danger::before" in css_text
+    for app_path, css_path in targets:
+        app_text = app_path.read_text(encoding="utf-8")
+        css_text = css_path.read_text(encoding="utf-8")
+
+        assert 'addEventListener("contextmenu"' in app_text
+        assert "removeTopologyChannel(index)" in app_text
+        assert "removeTopologyTarget(node.dataset.topologyTargetKey)" in app_text
+        assert 'data-topology-target-key="${escapeHtml(target.key)}"' in app_text
+        assert 'document.addEventListener("pointermove", onPointerMove)' in app_text
+        assert "anchorNode.contains(target) || menu.contains(target)" in app_text
+        assert 'menu.classList.add("danger-only")' in app_text
+        assert ".topology-context-menu" in css_text
+        assert ".topology-context-menu.danger-only" in css_text
+        assert "@keyframes topology-context-in" in css_text
+        assert ".topology-context-menu button.danger::before" in css_text

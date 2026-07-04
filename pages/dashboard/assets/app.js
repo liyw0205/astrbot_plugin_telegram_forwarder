@@ -11,7 +11,8 @@ import {
   withButtonLoading,
   setCollectFormsCallback,
   setRenderAllCallback,
-  bindCardPhysics
+  bindCardPhysics,
+  renderDashboardLoadError
 } from './js/context.js';
 import { initLogin, checkToken } from './js/ui_login.js';
 import { initOverview, renderStatus } from './js/ui_overview.js';
@@ -1557,7 +1558,12 @@ async function boot() {
 
   if (isDashboardPage()) {
     store.updateState({ token: "dashboard" });
-    await enterApp();
+    try {
+      await enterApp();
+    } catch (error) {
+      console.error("Dashboard Page boot failed:", error);
+      renderDashboardLoadError(error);
+    }
     return;
   }
 
