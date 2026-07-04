@@ -29,6 +29,14 @@ def test_dashboard_plugin_page_skips_legacy_token_auth() -> None:
     assert 'src="/assets/app.js"' not in text
 
 
+def test_dashboard_plugin_page_loads_bridge_before_app() -> None:
+    text = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+
+    bridge_pos = text.index('src="/api/plugin/page/bridge-sdk.js"')
+    app_pos = text.index('src="./assets/app.js"')
+    assert bridge_pos < app_pos
+
+
 def test_dashboard_plugin_page_title_i18n_exists() -> None:
     i18n_root = ROOT / ".astrbot-plugin" / "i18n"
     for locale in ("zh-CN", "en-US"):
