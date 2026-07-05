@@ -445,11 +445,7 @@ class Main(star.Star):
 
     def _start_web_admin_server(self) -> None:
         try:
-            from .core.web_admin import WebAdminServer
-
-            if self.web_admin_server is None:
-                self.web_admin_server = WebAdminServer(self, self._web_loop)
-            self.web_admin_server.start()
+            self._ensure_web_admin_server().start()
         except Exception as e:
             logger.error(f"Telegram Forwarder Web 管理页面启动失败: {e}")
 
@@ -517,11 +513,14 @@ class Main(star.Star):
             f" - 发送任务: 每 {send_interval}s 执行一次 (首次执行: {send_start_time.strftime('%H:%M:%S')})"
         )
         source_channels = self.config.get("source_channels", [])
-        channel_names = [
-            c.get("channel_username")
-            for c in source_channels
-            if isinstance(c, dict) and c.get("channel_username")
-        ]
+        channel_names: list[str] = []
+        if isinstance(source_channels, list):
+            for channel_cfg in source_channels:
+                if not isinstance(channel_cfg, dict):
+                    continue
+                channel_name = str(channel_cfg.get("channel_username") or "").strip()
+                if channel_name:
+                    channel_names.append(channel_name)
         logger.info(
             f"正在监控频道: {', '.join(channel_names) if channel_names else '无'}"
         )
