@@ -11,11 +11,25 @@ class Storage:
     """
 
     @staticmethod
+    def _normalize_target_sessions(value) -> list[str]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        normalized: list[str] = []
+        for target in value:
+            if target is None:
+                continue
+            target_str = str(target).strip()
+            if target_str:
+                normalized.append(target_str)
+        return normalized
+
+    @staticmethod
     def _normalize_pending_item(msg: dict) -> dict:
         return {
             "id": msg["id"],
             "time": msg["time"],
             "grouped_id": msg.get("grouped_id"),
+            "merge_rule_class": msg.get("merge_rule_class", ""),
             "is_cold_start": msg.get("is_cold_start", False),
             "is_monitored": msg.get("is_monitored", False),
             "retry_count": msg.get("retry_count", 0),
@@ -25,6 +39,9 @@ class Storage:
             "last_attempt_at": msg.get("last_attempt_at", 0),
             "last_target_session": msg.get("last_target_session", ""),
             "last_tg_target": msg.get("last_tg_target", ""),
+            "completed_qq_targets": Storage._normalize_target_sessions(
+                msg.get("completed_qq_targets", [])
+            ),
         }
 
     def __init__(self, data_file: str | Path):
@@ -226,6 +243,7 @@ class Storage:
                     "last_attempt_at": 0,
                     "last_target_session": "",
                     "last_tg_target": "",
+                    "completed_qq_targets": [],
                 }
             )
             changed = True
@@ -242,6 +260,40 @@ class Storage:
                 continue
             item["last_tg_target"] = target_channel
             changed = True
+        if changed:
+            self.save()
+
+    def mark_pending_qq_targets_completed(
+        self, channel_name: str, msg_ids: list[int], target_sessions: list[str]
+    ) -> None:
+        completed_targets = self._normalize_target_sessions(target_sessions)
+        if not completed_targets:
+            return
+        data = self.get_channel_data(channel_name)
+        changed = False
+        for item in data["pending_queue"]:
+            if item["id"] not in msg_ids:
+                continue
+            current = self._normalize_pending_item(item)["completed_qq_targets"]
+            merged = list(dict.fromkeys([*current, *completed_targets]))
+            if merged == current:
+                continue
+            item["completed_qq_targets"] = merged
+            changed = True
+        if changed:
+            self.save()
+
+    def clear_pending_qq_targets_completed(
+        self, channel_name: str, msg_ids: list[int]
+    ) -> None:
+        data = self.get_channel_data(channel_name)
+        changed = False
+        for item in data["pending_queue"]:
+            if item["id"] not in msg_ids:
+                continue
+            if item.get("completed_qq_targets"):
+                item["completed_qq_targets"] = []
+                changed = True
         if changed:
             self.save()
 

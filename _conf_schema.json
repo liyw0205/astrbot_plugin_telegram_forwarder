@@ -45,6 +45,43 @@
         "hint": "部分网络环境访问 Telegram 需要代理，例如 http://127.0.0.1:7890",
         "default": ""
     },
+    "web_config": {
+        "type": "object",
+        "description": "Web 管理页面",
+        "hint": "内置 Flask Web 管理页面配置，保存 host/port 后需要重载插件生效",
+        "items": {
+            "enabled": {
+                "description": "启用 Web 页面",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后插件启动时会同时启动 Flask Web 管理页面"
+            },
+            "host": {
+                "description": "监听地址",
+                "type": "string",
+                "default": "127.0.0.1",
+                "hint": "默认仅本机访问；如需局域网访问可显式改为 0.0.0.0"
+            },
+            "port": {
+                "description": "监听端口",
+                "type": "int",
+                "default": 8180,
+                "hint": "默认 8180"
+            },
+            "token": {
+                "description": "访问 Token",
+                "type": "string",
+                "default": "",
+                "hint": "留空会自动生成随机 Token；打开 Web 页面后输入此 Token 才能读取和修改配置"
+            }
+        },
+        "default": {
+            "enabled": true,
+            "host": "127.0.0.1",
+            "port": 8180,
+            "token": ""
+        }
+    },
     "debug_enabled_default": {
         "description": "QQ 发送诊断日志",
         "type": "bool",
@@ -285,6 +322,12 @@
                 "default": "",
                 "hint": "仅在直链关联模式下生效。插件会把文件名拼接到该基址后，例如 https://files.example.com/downloads/"
             },
+            "file_direct_link_base_url": {
+                "description": "普通文件直链基址",
+                "type": "string",
+                "default": "",
+                "hint": "当非 APK 文件被 QQ 富媒体上传拒收时，插件会优先把文件名拼接到该公网基址后改发直链；留空则尝试源文件路径兜底。"
+            },
             "check_interval": {
                 "description": "检测间隔(秒)",
                 "type": "int",
@@ -313,6 +356,18 @@
                 "type": "int",
                 "default": 0,
                 "hint": "限制每轮 send_pending_messages 最多发送多少个 QQ 逻辑单元（单条=1，相册=1）；0 表示不额外限制"
+            },
+            "album_settle_seconds": {
+                "description": "相册等待完整秒数",
+                "type": "int",
+                "default": 8,
+                "hint": "抓到最新 Telegram 相册尾部时等待几秒再入队，避免图集还没到齐就被半组发送。0 表示不等待"
+            },
+            "album_lookahead_limit": {
+                "description": "相册边界补拉上限",
+                "type": "int",
+                "default": 20,
+                "hint": "当单次抓取上限刚好截断相册时，最多向后补拉多少条同组消息"
             },
             "qq_target_fail_fast_consecutive_failures": {
                 "description": "QQ 目标连续失败熔断阈值",
@@ -398,13 +453,19 @@
     },
     "merge_rules": {
         "type": "template_list",
-        "description": "消息合并规则（暂未实现）",
-        "hint": "针对不规范频道的多消息组合进行智能合并（如预览图+原图）",
+        "description": "消息合并规则",
+        "hint": "针对不规范频道的多消息组合进行智能合并（如关键词触发后合并后续 N 条、预览图+原图）",
         "templates": {
             "default": {
                 "name": "合并规则配置",
                 "hint": "配置特定频道的消息合并规则",
                 "items": {
+                    "name": {
+                        "type": "string",
+                        "description": "规则名称",
+                        "default": "",
+                        "hint": "仅用于 Web 页面显示，留空时自动使用频道和规则类型生成标题"
+                    },
                     "channel": {
                         "type": "string",
                         "description": "频道用户名 (不带@)",
@@ -415,24 +476,47 @@
                         "description": "规则类名",
                         "options": [
                             "",
+                            "KeywordNextNMerge",
                             "SomeACGPreviewPlusOriginal"
                         ],
                         "default": "",
-                        "hint": "选择合并规则类。SomeACGPreviewPlusOriginal: 合并预览图说明+原图"
+                        "hint": "KeywordNextNMerge: 触发关键词后合并后续 N 条；SomeACGPreviewPlusOriginal: 合并预览图说明+原图"
                     },
                     "params": {
                         "type": "object",
                         "description": "规则参数",
                         "items": {
+                            "trigger_keywords": {
+                                "type": "list",
+                                "item_type": "string",
+                                "description": "触发关键词",
+                                "default": [],
+                                "hint": "KeywordNextNMerge 使用。命中后会把当前消息和后续 N 条合并为一个逻辑组"
+                            },
+                            "trigger_regex": {
+                                "type": "string",
+                                "description": "触发正则",
+                                "default": "",
+                                "hint": "KeywordNextNMerge 使用。可选，命中后触发合并"
+                            },
+                            "next_count": {
+                                "type": "int",
+                                "description": "后续消息数",
+                                "default": 2,
+                                "hint": "KeywordNextNMerge 使用。合并触发消息后面的 N 条消息"
+                            },
                             "time_window_seconds": {
                                 "type": "int",
-                                "description": "时间窗口 (秒)",
-                                "default": 10,
-                                "hint": "关联消息的最大时间差（默认10秒）"
+                                "description": "合并超时/时间窗口 (秒)",
+                                "default": 60,
+                                "hint": "KeywordNextNMerge 中为等待后续消息的超时窗口；SomeACG 中为关联消息最大时间差"
                             }
                         },
                         "default": {
-                            "time_window_seconds": 10
+                            "trigger_keywords": [],
+                            "trigger_regex": "",
+                            "next_count": 2,
+                            "time_window_seconds": 60
                         }
                     }
                 }
@@ -441,6 +525,7 @@
         "default": [
             {
                 "__template_key": "default",
+                "name": "SomeACG 默认规则",
                 "channel": "SomeACG",
                 "rule_class": "SomeACGPreviewPlusOriginal",
                 "params": {

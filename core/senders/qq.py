@@ -7,7 +7,7 @@
 import asyncio
 import os
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,10 +30,7 @@ from .qq_batch_builder import (
 )
 from .qq_circuit import record_target_failure, record_target_success, target_is_open
 from .qq_dispatcher import dispatch_processed_batches_to_targets, send_processed_batch
-from .qq_file_fallback import (
-    handle_apk_file_send_failure,
-    resolve_apk_fallback_policy,
-)
+from .qq_file_fallback import handle_file_send_failure, resolve_apk_fallback_policy
 from .qq_log_policy import QQLogPolicy
 from .qq_media import (
     File,
@@ -85,6 +82,7 @@ MEDIA_SEND_KINDS = {
     "audio_file",
     "video_file",
     "special_media",
+    "fallback_file_source",
     "fallback_zip",
 }
 
@@ -101,6 +99,9 @@ class QQSendSummary:
     failed_batch_indexes: tuple[int, ...] = ()
     deferred_batch_indexes: tuple[int, ...] = ()
     error_types: dict[int, str] = field(default_factory=dict)
+    target_sessions: tuple[str, ...] = ()
+    target_sessions_by_batch: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    completed_target_sessions: dict[int, tuple[str, ...]] = field(default_factory=dict)
 
 
 class QQSender:
@@ -284,8 +285,10 @@ class QQSender:
         unified_msg_origin: str,
         target_session: str,
     ) -> bool:
-        return await handle_apk_file_send_failure(
-            policy=resolve_apk_fallback_policy(self.config.get("forward_config", {})),
+        forward_cfg = self.config.get("forward_config", {})
+        return await handle_file_send_failure(
+            forward_cfg=forward_cfg,
+            apk_policy=resolve_apk_fallback_policy(forward_cfg),
             component=component,
             error=error,
             batch_data=batch_data,
@@ -555,6 +558,7 @@ class QQSender:
         display_name: str | None = None,
         effective_cfg: dict[str, object] | None = None,
         involved_channels: list[str] | None = None,
+        completed_target_sessions_by_batch: Mapping[int, Iterable[str]] | None = None,
     ):
         """将一个或多个 Telegram 消息批次转发到 QQ 目标。
 
@@ -567,6 +571,8 @@ class QQSender:
             display_name: 展示用频道名；为空时回退到 `src_channel`。
             effective_cfg: 当前发送实际生效的配置。
             involved_channels: 参与本轮合并发送的频道列表。
+            completed_target_sessions_by_batch: 各批次已完成发送的 QQ 目标会话
+                （批次索引 → 目标集合），命中的目标本轮跳过以避免重复发送；只读。
 
         Returns:
             `QQSendSummary`，其中批次索引始终对应展平后的逻辑批次顺序，便于上层做确认与重试决策。
@@ -625,6 +631,31 @@ class QQSender:
 
         is_mixed_big_merge = bool(involved_channels and len(involved_channels) > 1)
 
+        context_target_set = set(context_target_sessions)
+        target_successes = {
+            batch_index: {
+                str(target_session)
+                for target_session in (completed_target_sessions_by_batch or {}).get(
+                    batch_index, ()
+                )
+                if str(target_session) in context_target_set
+            }
+            for batch_index in range(len(real_batches))
+        }
+        deferred_batch_indexes: set[int] = set()
+
+        if all(
+            len(success_sessions) == len(context_target_sessions)
+            for success_sessions in target_successes.values()
+        ):
+            logger.debug("[QQSender] 本轮批次的 QQ 目标均已完成，跳过重复发送")
+            return self._build_send_summary(
+                context_target_sessions=context_target_sessions,
+                target_successes=target_successes,
+                target_failures={},
+                deferred_batch_indexes=deferred_batch_indexes,
+            )
+
         build_result = await build_processed_batches(
             sender=self,
             real_batches=real_batches,
@@ -636,10 +667,6 @@ class QQSender:
         )
         processed_batches = build_result.processed_batches
         target_failures = build_result.target_failures
-        target_successes = {
-            batch_index: set() for batch_index in range(len(real_batches))
-        }
-        deferred_batch_indexes: set[int] = set()
 
         use_big_merge = (qq_merge_threshold > 1) and (
             len(processed_batches) >= qq_merge_threshold

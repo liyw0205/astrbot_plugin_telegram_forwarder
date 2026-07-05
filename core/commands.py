@@ -490,8 +490,12 @@ class PluginCommands:
             return
 
         yield event.plain_result("🔄 正在触发全量检查更新...")
-        asyncio.create_task(self.forwarder.check_updates())
-        asyncio.create_task(self.forwarder.send_pending_messages())
+
+        async def run_once():
+            await self.forwarder.check_updates(force=True)
+            await self.forwarder.send_pending_messages(force_immediate=True)
+
+        asyncio.create_task(run_once())
 
     async def show_status(self, event: AstrMessageEvent):
         """查看插件运行状态（已合并统计信息）"""
@@ -901,6 +905,10 @@ class PluginCommands:
                 ),
                 ("apk_direct_link_base_url", "APK 直链基址（仅在直链模式下生效）"),
                 (
+                    "file_direct_link_base_url",
+                    "普通文件直链基址（非 APK 文件上传失败时生效）",
+                ),
+                (
                     "exclude_text_on_media",
                     "媒体消息是否只发媒体不带文字（true/false/开启/关闭）",
                 ),
@@ -1091,6 +1099,7 @@ class PluginCommands:
                 "max_file_size": float,
                 "apk_fallback_mode": str,
                 "apk_direct_link_base_url": str,
+                "file_direct_link_base_url": str,
                 "exclude_text_on_media": lambda v: (
                     v.lower() in ("true", "1", "yes", "y", "开启", "开", "是")
                 ),
@@ -1398,6 +1407,7 @@ class PluginCommands:
             "max_file_size": float,
             "apk_fallback_mode": str,
             "apk_direct_link_base_url": str,
+            "file_direct_link_base_url": str,
             "start_time": str,
             "curfew_time": str,
             "filter_regex": str,

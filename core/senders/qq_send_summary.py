@@ -22,6 +22,9 @@ class QQSendSummaryFactory(Protocol[QQSendSummaryT]):
         failed_batch_indexes: tuple[int, ...],
         deferred_batch_indexes: tuple[int, ...],
         error_types: dict[int, str],
+        target_sessions: tuple[str, ...],
+        target_sessions_by_batch: dict[int, tuple[str, ...]],
+        completed_target_sessions: dict[int, tuple[str, ...]],
     ) -> QQSendSummaryT: ...
 
 
@@ -47,6 +50,7 @@ def build_send_summary(
     """
 
     target_count = len(context_target_sessions)
+    target_session_tuple = tuple(context_target_sessions)
     acked = tuple(
         batch_index
         for batch_index, success_sessions in target_successes.items()
@@ -64,6 +68,16 @@ def build_send_summary(
         failed_batch_indexes=failed,
         deferred_batch_indexes=deferred,
         error_types=target_failures,
+        target_sessions=target_session_tuple,
+        target_sessions_by_batch=dict.fromkeys(target_successes, target_session_tuple),
+        completed_target_sessions={
+            batch_index: tuple(
+                target_session
+                for target_session in target_session_tuple
+                if target_session in success_sessions
+            )
+            for batch_index, success_sessions in target_successes.items()
+        },
     )
 
 

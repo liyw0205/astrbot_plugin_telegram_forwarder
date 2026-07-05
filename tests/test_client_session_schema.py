@@ -135,6 +135,19 @@ def load_main_module(data_dir: Path):
         "astrbot.api.event": SimpleNamespace(
             AstrMessageEvent=object, filter=filter_stub
         ),
+        "astrbot.api.web": SimpleNamespace(
+            error_response=lambda message, status_code=400, data=None, headers=None: {
+                "status": "error",
+                "message": message,
+                "data": data or {},
+                "status_code": status_code,
+            },
+            json_response=lambda data=None, status_code=200, headers=None: {
+                "status_code": status_code,
+                "data": data or {},
+            },
+            request=MagicMock(),
+        ),
         "astrbot.core": MagicMock(),
         "astrbot.core.utils": SimpleNamespace(path_utils=path_utils_stub),
         "astrbot.core.utils.path_utils": path_utils_stub,
@@ -214,7 +227,9 @@ def test_main_accepts_uploaded_session_path_inside_plugin_data_dir():
 
         main_module.Main(MagicMock(), {"telegram_session": [uploaded_file.name]})
 
-        assert (tmp_dir / "user_session.session").read_text(encoding="utf-8") == "session"
+        assert (tmp_dir / "user_session.session").read_text(
+            encoding="utf-8"
+        ) == "session"
         main_module.TelegramClientWrapper.clear_cache.assert_called_with(
             str(tmp_dir / "user_session")
         )
@@ -447,6 +462,119 @@ def test_restore_backup_when_migration_write_fails():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def test_main_registers_dashboard_page_web_apis():
+    tmp_dir = make_test_dir()
+    try:
+        main_module = load_main_module(tmp_dir)
+        context = MagicMock()
+
+        main_module.Main(context, {})
+
+        registered_routes = [
+            call.args[0] for call in context.register_web_api.call_args_list
+        ]
+        assert f"/{PLUGIN_NAME}/status" in registered_routes
+        assert f"/{PLUGIN_NAME}/config" in registered_routes
+        assert f"/{PLUGIN_NAME}/login/start" in registered_routes
+        assert f"/{PLUGIN_NAME}/runtime/check" in registered_routes
+        assert all(route.startswith(f"/{PLUGIN_NAME}/") for route in registered_routes)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_refreshes_stale_backup_before_failed_migration_rollback():
+    client_module = load_client_module()
+    wrapper = client_module.TelegramClientWrapper
+
+    tmp_dir = make_test_dir()
+    try:
+        session_path = tmp_dir / "user_session"
+        session_file = tmp_dir / "user_session.session"
+        backup_file = tmp_dir / "user_session.session.bak"
+        make_current_session_db(session_file)
+        make_current_session_db(backup_file)
+
+        conn = sqlite3.connect(session_file)
+        conn.execute(
+            """
+            UPDATE sessions
+            SET auth_key = ?, takeout_id = ?, tmp_auth_key = ?
+            """,
+            (b"current-auth", 42, b"current-tmp"),
+        )
+        conn.commit()
+        conn.close()
+
+        conn = sqlite3.connect(backup_file)
+        conn.execute(
+            """
+            UPDATE sessions
+            SET auth_key = ?, takeout_id = ?, tmp_auth_key = ?
+            """,
+            (b"stale-auth", 7, b"stale-tmp"),
+        )
+        conn.commit()
+        conn.close()
+
+        real_connect = client_module.sqlite3.connect
+        connect_calls = 0
+
+        class FailingMigrationConnection:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, sql, *args, **kwargs):
+                if "ALTER TABLE sessions RENAME" in sql:
+                    raise sqlite3.OperationalError("simulated migration failure")
+                return self._conn.execute(sql, *args, **kwargs)
+
+            def commit(self):
+                return self._conn.commit()
+
+            def close(self):
+                return self._conn.close()
+
+        def connect_with_failing_migration(*args, **kwargs):
+            nonlocal connect_calls
+            connect_calls += 1
+            conn = real_connect(*args, **kwargs)
+            if connect_calls == 2:
+                return FailingMigrationConnection(conn)
+            return conn
+
+        with patch.object(
+            client_module.sqlite3, "connect", side_effect=connect_with_failing_migration
+        ):
+            try:
+                wrapper._ensure_compatible_session_schema(str(session_path))
+            except sqlite3.OperationalError:
+                pass
+
+        conn = sqlite3.connect(session_file)
+        cols = conn.execute("PRAGMA table_info(sessions)").fetchall()
+        row = conn.execute("SELECT * FROM sessions").fetchone()
+        conn.close()
+
+        assert [col[1] for col in cols] == [
+            "dc_id",
+            "server_address",
+            "port",
+            "auth_key",
+            "takeout_id",
+            "tmp_auth_key",
+        ]
+        assert row == (5, "149.154.167.51", 443, b"current-auth", 42, b"current-tmp")
+
+        rotated_backup = tmp_dir / "user_session.session.bak.1"
+        assert rotated_backup.exists()
+        conn = sqlite3.connect(rotated_backup)
+        stale_row = conn.execute("SELECT * FROM sessions").fetchone()
+        conn.close()
+        assert stale_row == (5, "149.154.167.51", 443, b"stale-auth", 7, b"stale-tmp")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def test_clear_cache_closes_cached_session_before_removal():
     client_module = load_client_module()
     session_path = "synthetic/session/user_session"
@@ -496,9 +624,9 @@ def test_init_client_reports_schema_migration_failure_without_caching_client():
             "_ensure_compatible_session_schema",
             side_effect=sqlite3.DatabaseError("broken schema"),
         ) as repair_schema:
-                wrapper = client_module.TelegramClientWrapper(
-                    {"api_id": 123, "api_hash": "hash"}, tmp_dir
-                )
+            wrapper = client_module.TelegramClientWrapper(
+                {"api_id": 123, "api_hash": "hash"}, tmp_dir
+            )
 
         assert wrapper.client is None
         telegram_client.assert_called_once()

@@ -97,7 +97,7 @@ def _is_apk_component(component: File) -> bool:
     return source_ext in APK_FALLBACK_EXTENSIONS
 
 
-def _is_apk_rich_media_failure(
+def _is_rich_media_failure(
     error: Exception, classify_send_error: Callable[[Exception], str]
 ) -> bool:
     message = str(error).lower()
@@ -106,6 +106,12 @@ def _is_apk_rich_media_failure(
         or "retcode=1200" in message
         or classify_send_error(error) == "retcode_1200"
     )
+
+
+def _is_apk_rich_media_failure(
+    error: Exception, classify_send_error: Callable[[Exception], str]
+) -> bool:
+    return _is_rich_media_failure(error, classify_send_error)
 
 
 def _build_direct_link(base_url: str, filename: str) -> str:
@@ -117,6 +123,19 @@ def _build_direct_link(base_url: str, filename: str) -> str:
     return urlunsplit(
         (parts.scheme, parts.netloc, full_path, parts.query, parts.fragment)
     )
+
+
+def _build_unmapped_file_component(local_path: str, display_name: str) -> File:
+    component = File(
+        file=local_path,
+        url="",
+        name=display_name,
+    )
+    try:
+        object.__setattr__(component, "_tgf_source_path", local_path)
+    except Exception:
+        component.__dict__["_tgf_source_path"] = local_path
+    return component
 
 
 def _build_file_component(
@@ -158,6 +177,76 @@ def _create_apk_zip_archive(
     ) as archive:
         archive.write(source, arcname=original_name)
     return str(archive_path), archive_name
+
+
+async def _try_non_apk_file_fallback(
+    *,
+    forward_cfg: Mapping[str, object],
+    component: File,
+    error: Exception,
+    unified_msg_origin: str,
+    target_session: str,
+    send_message_fn: SendMessageFn,
+) -> bool:
+    original_name = _get_file_component_name(component)
+    direct_link_base_url = str(
+        forward_cfg.get("file_direct_link_base_url", "") or ""
+    ).strip()
+    if direct_link_base_url:
+        direct_link = _build_direct_link(direct_link_base_url, original_name)
+        try:
+            await send_message_fn(
+                unified_msg_origin,
+                MessageChain(
+                    [
+                        Plain(
+                            f"原文件 {original_name} 因 QQ 文件上传失败，改发直链：{direct_link}"
+                        )
+                    ]
+                ),
+                send_kind="fallback_link",
+            )
+        except Exception as link_error:
+            logger.warning(
+                f"[QQSender] 文件直链降级发送失败，继续尝试源文件路径兜底: "
+                f"target={target_session}, file={original_name}, "
+                f"original_error={error!r}, fallback_error={link_error!r}"
+            )
+        else:
+            logger.warning(
+                f"[QQSender] 文件发送失败，已降级为直链: "
+                f"target={target_session}, file={original_name}"
+            )
+            return True
+
+    source_path = _get_file_component_source_path(component)
+    if not source_path or not Path(source_path).is_file():
+        logger.warning(
+            f"[QQSender] 文件发送失败且缺少可访问源文件，无法源文件兜底: "
+            f"target={target_session}, file={original_name}, source={source_path!r}"
+        )
+        return False
+
+    source_component = _build_unmapped_file_component(source_path, original_name)
+    try:
+        await send_message_fn(
+            unified_msg_origin,
+            MessageChain([source_component]),
+            send_kind="fallback_file_source",
+        )
+    except Exception as source_error:
+        logger.warning(
+            f"[QQSender] 源文件路径兜底发送失败: target={target_session}, "
+            f"file={original_name}, source={source_path!r}, "
+            f"original_error={error!r}, fallback_error={source_error!r}"
+        )
+        return False
+
+    logger.warning(
+        f"[QQSender] 文件发送失败，已使用源文件路径兜底重试: "
+        f"target={target_session}, file={original_name}, source={source_path!r}"
+    )
+    return True
 
 
 async def handle_apk_file_send_failure(
@@ -232,3 +321,42 @@ async def handle_apk_file_send_failure(
         f"[QQSender] APK 文件发送失败，已降级为压缩包: target={target_session}, file={original_name}, archive={archive_name}"
     )
     return True
+
+
+async def handle_file_send_failure(
+    *,
+    forward_cfg: Mapping[str, object],
+    apk_policy: ApkFallbackPolicy,
+    component: File,
+    error: Exception,
+    batch_data: ProcessedBatchData,
+    unified_msg_origin: str,
+    target_session: str,
+    send_message_fn: SendMessageFn,
+    map_path: Callable[[str], str],
+    classify_send_error: Callable[[Exception], str],
+    plugin_data_dir: Path | None,
+) -> bool:
+    if not _is_rich_media_failure(error, classify_send_error):
+        return False
+    if _is_apk_component(component):
+        return await handle_apk_file_send_failure(
+            policy=apk_policy,
+            component=component,
+            error=error,
+            batch_data=batch_data,
+            unified_msg_origin=unified_msg_origin,
+            target_session=target_session,
+            send_message_fn=send_message_fn,
+            map_path=map_path,
+            classify_send_error=classify_send_error,
+            plugin_data_dir=plugin_data_dir,
+        )
+    return await _try_non_apk_file_fallback(
+        forward_cfg=forward_cfg,
+        component=component,
+        error=error,
+        unified_msg_origin=unified_msg_origin,
+        target_session=target_session,
+        send_message_fn=send_message_fn,
+    )

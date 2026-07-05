@@ -76,7 +76,7 @@ async def main():
             phone = await _async_input("请输入手机号 (带国际区号, 如 +86138...): ")
             await client.send_code_request(phone)
 
-            code = await _async_input("请输入您收到的验证码: ")
+            code = await _async_input("请输入您收到的验证码原文（不要每位加 1）: ")
             try:
                 await client.sign_in(phone, code)
             except SessionPasswordNeededError:

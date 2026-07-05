@@ -64,6 +64,38 @@
 /tg help             显示此帮助
 ```
 
+## Web 管理页面
+
+插件支持两种 Web 管理入口：
+
+1. AstrBot Dashboard 内嵌页面：进入 AstrBot WebUI 的插件详情页，打开插件行为里的 `dashboard` 页面。该入口复用 AstrBot Dashboard 登录态，不需要单独输入 Web Token，也不需要额外开放端口。
+2. 独立 Flask Web 管理页面：保留给旧部署和直接浏览器访问场景，启动插件后默认监听：
+
+```text
+http://127.0.0.1:8180/
+```
+
+独立 Flask 页面首次启动会自动生成随机 Web Token，并写入插件配置的 `web_config.token`。可在插件配置的 `web_config` 中修改 `enabled`、`host`、`port`、`token`；如需局域网访问，请显式将 `host` 改为 `0.0.0.0`。这些配置只影响独立 Flask 页面，不影响 AstrBot Dashboard 内嵌页面。
+
+页面支持在浏览器中修改转发配置、源频道配置、查看运行状态、清空队列，以及完成 Telegram 登录。通过 Web 页面或 `relogin.py` 本地工具提交 Telegram 验证码时，请输入 Telegram 收到的验证码原文；只有使用聊天命令 `/tg login code` 时才需要输入“每位加 1 后”的验证码。
+
+### 前端源码与构建（开发者须知）
+
+两个 Web 入口共用同一份前端源码，采用「单一源目录 + 生成产物」结构：
+
+- `web/`：唯一手工编辑的前端源码目录（可零构建直接由 Flask 服务，改完刷新即可预览）。
+- `scripts/dashboard_overrides/`：Dashboard 插件页的环境适配文件（bridge 版 `api.js`、插件页 `index.html` 模板）。
+- `pages/dashboard/`：**生成产物，禁止手改**。由构建脚本从上述两处生成，`style.css` 会被合并为自包含文件，`index.html` 的 `?v=` 缓存版本号由资产内容哈希自动生成。
+
+修改前端后执行：
+
+```bash
+python scripts/build_frontend.py          # 重新生成 pages/dashboard/
+python scripts/build_frontend.py --check  # 校验产物是否与源同步（pytest 亦会强制校验）
+```
+
+`tests/test_web_frontend_assets.py::test_generated_dashboard_artifacts_in_sync_with_web_source` 会在产物漂移（忘记重跑构建或手改了产物）时使测试失败。
+
 ## ⚙️ 配置说明
 
 ### 1. 账号连接
@@ -183,7 +215,7 @@ https://api.ipify.org
 由于 Docker/后台环境无法直接输入验证码，或因服务器网络环境触发人机验证（Cloudflare 等）导致登录失败，请按以下步骤在本地环境中生成会话文件：
 1. 进入插件目录：`cd data/plugins/astrbot_plugin_telegram_forwarder`
 2. 运行登录工具：`python relogin.py` (请确保已安装依赖)
-3. 按提示输入手机号与验证码，生成的 `user_session.session` 会自动保存至数据目录。
+3. 按提示输入手机号与 Telegram 收到的验证码原文（不要每位加 1），生成的 `user_session.session` 会自动保存至数据目录。
 4. 重启 AstrBot 即可生效。
 
 > **提示**：如果机器人的网络环境被 Telegram 要求人机验证而无法登录，您可以将此工具下载到本地电脑，更换网络环境运行成功后再将生成的 `.session` 文件上传至插件数据目录。
@@ -216,6 +248,7 @@ https://api.ipify.org
 * **exclude_text_on_media**: 开启后，包含媒体的消息将不再发送文本内容（包含 From 头部）。
 * **apk_fallback_mode**: 当 QQ 发送 `.apk/.xapk/.apkm/.apks` 返回 `rich media transfer failed` 时的降级策略：`关闭` / `直链` / `压缩包` / `直链优先，失败转压缩包`
 * **apk_direct_link_base_url**: 直链降级使用的公网下载基地址，例如 `https://files.example.com/downloads/`。请确保外部可访问，且生成的文件 URL 可被 QQ 客户端打开。
+* **file_direct_link_base_url**: 非 APK 普通文件发送失败时的直链基地址，例如 `.zip` 被 QQ 富媒体上传拒收后会优先改发 `基地址 + 文件名`；留空则尝试用 AstrBot 可读的源文件路径重发一次。
 * **filter_spoiler_messages**: 过滤 Telegram 遮罩/剧透消息（文本剧透实体与媒体剧透标记）。
 * **strip_markdown_links**: 开启后，[文本](链接) 只保留「文本」，链接部分被完全丢弃
 * **batch_size_limit**: 每次转发执行时，单次处理的消息批次上限。
@@ -225,6 +258,52 @@ https://api.ipify.org
 * **monitor_keywords**: 全局监听关键词。与频道监听关键词做并集，命中后立即触发转发。
 * **monitor_regex**: 全局监听正则。与频道监听正则共同生效，命中后立即触发转发。
 
+### 6. 跨环境部署：路径映射（AstrBot 与 NapCat 部署方式不同时必读）
+
+当 AstrBot 与 NapCat **不在同一个文件系统**中运行时（例如 AstrBot 跑在宿主机、NapCat 跑在 Docker 容器里，或两者在不同容器中），**必须配置路径映射**，否则文件、视频以及语音发送失败后的源文件补发都会失败。
+
+**典型报错**（NapCat 侧收到宿主机路径，容器内不存在）：
+
+```text
+ActionFailed retcode=1200, message="ENOENT: no such file or directory,
+copyfile '/E:/.../plugin_data/astrbot_plugin_telegram_forwarder/xxx.flac' -> '/app/.config/QQ/NapCat/temp/....flac'"
+```
+
+**原因**：图片和语音条会在 AstrBot 进程内转成 base64 传输，不受影响；但文件（File）、视频（Video）等大载荷是**按本地路径**下发给 NapCat 的。NapCat 在容器内无法访问 AstrBot 宿主机上的路径，就会报 `ENOENT`。
+
+**解决步骤**：
+
+1. **把插件数据目录挂载进 NapCat 容器**（只读即可）。以 docker run 为例：
+
+   ```bash
+   -v /path/to/astrbot/data/plugin_data:/plugin_data:ro
+   ```
+
+   docker-compose 写法：
+
+   ```yaml
+   volumes:
+     - /path/to/astrbot/data/plugin_data:/plugin_data:ro
+   ```
+
+2. **在 AstrBot 中配置路径映射**：打开 AstrBot WebUI → 配置 → 其他配置 → 平台设置 → `路径映射 (path_mapping)`，添加一条规则，格式为 `<AstrBot 侧路径>:<NapCat 容器内路径>`：
+
+   ```text
+   /path/to/astrbot/data/plugin_data:/plugin_data
+   ```
+
+   Windows 宿主机同样支持盘符路径（建议使用正斜杠）：
+
+   ```text
+   E:/astrbot/data/plugin_data:/plugin_data
+   ```
+
+3. **重启 AstrBot** 使配置生效。
+
+配置成功后，日志中会出现类似 `[QQSender] Path mapping: 'E:\\...\\xxx.flac' -> '/plugin_data/astrbot_plugin_telegram_forwarder/xxx.flac'` 的映射记录。
+
+> **提示**：如果 AstrBot 与 NapCat 运行在同一环境（同宿主机直装，或同一容器内共享文件系统），无需此配置。
+
 ---
 
 ## 💡 常见问题
@@ -233,6 +312,8 @@ https://api.ipify.org
   * **A**: 插件会将外链和语音分两条消息发送，请检查消息是否被群管屏蔽。
 * **Q: 大文件发送失败？**
   * **A**: 请先确认 `forward_types` 和 `max_file_size` 配置，以及目标平台本身的消息限制。QQ 发送会按本地文件大小自动延长等待时间；超时不会自动重复发送，以避免重复消息。
+* **Q: 文件/音频发送报 `ENOENT: no such file or directory, copyfile ...`？**
+  * **A**: 这是 AstrBot 与 NapCat 部署环境不同（如 NapCat 跑在 Docker 中）导致 NapCat 无法访问 AstrBot 侧的文件路径。请参阅上文「[配置说明 → 6. 跨环境部署：路径映射](#6-跨环境部署路径映射astrbot-与-napcat-部署方式不同时必读)」完成目录挂载与 `path_mapping` 配置。
 * **Q: 数据存放在哪里？**
   * **A**: 所有登录会话与配置均持久化在 `data/plugin_data/astrbot_plugin_telegram_forwarder/` 目录下，更新插件不会丢失。
 

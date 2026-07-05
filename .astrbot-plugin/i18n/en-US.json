@@ -1,0 +1,8 @@
+{
+  "pages": {
+    "dashboard": {
+      "title": "Telegram Forwarder Dashboard",
+      "description": "Manage Telegram-to-QQ forwarding relations, runtime status, and configuration inside AstrBot Dashboard."
+    }
+  }
+}

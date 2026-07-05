@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import re
 import shutil
 import sqlite3
@@ -117,55 +118,152 @@ class TelegramClientWrapper:
         return str(self.plugin_data_dir / "user_session")
 
     @staticmethod
+    def _get_current_session_columns() -> list[str]:
+        """Return the session table columns expected by the installed Telethon."""
+        fallback_columns = [
+            "dc_id",
+            "server_address",
+            "port",
+            "auth_key",
+            "takeout_id",
+        ]
+        try:
+            from telethon.sessions.sqlite import SQLiteSession
+
+            source = inspect.getsource(SQLiteSession)
+            if "tmp_auth_key" not in source:
+                return fallback_columns
+
+            columns = [
+                "dc_id",
+                "server_address",
+                "port",
+                "auth_key",
+                "takeout_id",
+                "tmp_auth_key",
+            ]
+            if TelegramClientWrapper._telethon_reads_takeout_id_as_tmp_key():
+                columns.remove("tmp_auth_key")
+                takeout_idx = columns.index("takeout_id")
+                columns.insert(takeout_idx, "tmp_auth_key")
+            return columns
+        except Exception as e:
+            logger.debug(f"[Client] 检测 Telethon session schema 失败: {e}")
+            return fallback_columns
+
+    @staticmethod
+    def _telethon_reads_takeout_id_as_tmp_key() -> bool:
+        """Detect Telethon versions whose read order treats takeout_id as tmp_auth_key."""
+        try:
+            from telethon.sessions.sqlite import SQLiteSession
+
+            source = inspect.getsource(SQLiteSession.__init__)
+            normalized = "".join(source.replace("\\", "").split())
+            return "key,tmp_key,self._takeout_id=tuple_" in normalized
+        except Exception as e:
+            logger.debug(f"[Client] 检测 Telethon session 读取顺序失败: {e}")
+            return False
+
+    @staticmethod
+    def _rotate_existing_backup(backup_file: Path) -> None:
+        if not backup_file.exists():
+            return
+        suffix = 1
+        while True:
+            archived_backup = backup_file.with_name(f"{backup_file.name}.{suffix}")
+            if not archived_backup.exists():
+                backup_file.replace(archived_backup)
+                return
+            suffix += 1
+
+    @staticmethod
     def _ensure_compatible_session_schema(session_path: str) -> None:
         session_file = Path(f"{session_path}.session")
         if not session_file.exists():
             return
 
+        desired_columns = TelegramClientWrapper._get_current_session_columns()
+        column_defs = {
+            "dc_id": "dc_id integer primary key",
+            "server_address": "server_address text",
+            "port": "port integer",
+            "auth_key": "auth_key blob",
+            "takeout_id": "takeout_id integer",
+            "tmp_auth_key": "tmp_auth_key blob",
+        }
+        default_values = {
+            "dc_id": "0",
+            "server_address": "NULL",
+            "port": "NULL",
+            "auth_key": "x''",
+            "takeout_id": "NULL",
+            "tmp_auth_key": "NULL",
+        }
+
         conn = sqlite3.connect(session_file)
         try:
             columns = conn.execute("PRAGMA table_info(sessions)").fetchall()
             column_names = [column[1] for column in columns]
+            if not column_names or column_names == desired_columns:
+                return
+
+            unsupported = [col for col in desired_columns if col not in column_defs]
+            if unsupported:
+                logger.debug(
+                    f"[Client] 未识别的 Telethon session 字段 {unsupported}，跳过 schema 自愈。"
+                )
+                return
+
+            select_exprs = [
+                col if col in column_names else f"{default_values[col]} AS {col}"
+                for col in desired_columns
+            ]
+            rows = conn.execute(
+                f"SELECT {', '.join(select_exprs)} FROM sessions"
+            ).fetchall()
         finally:
             conn.close()
 
-        if not column_names:
-            return
-
-        if "tmp_auth_key" not in column_names:
-            return
+        if (
+            TelegramClientWrapper._telethon_reads_takeout_id_as_tmp_key()
+            and "takeout_id" in desired_columns
+            and "tmp_auth_key" in desired_columns
+            and desired_columns.index("takeout_id")
+            < desired_columns.index("tmp_auth_key")
+        ):
+            takeout_idx = desired_columns.index("takeout_id")
+            sanitized_rows = []
+            for row in rows:
+                row_list = list(row)
+                if row_list[takeout_idx] is not None and not isinstance(
+                    row_list[takeout_idx], (bytes, bytearray)
+                ):
+                    row_list[takeout_idx] = None
+                sanitized_rows.append(tuple(row_list))
+            rows = sanitized_rows
 
         backup_file = Path(f"{session_file}.bak")
-        if not backup_file.exists():
-            shutil.copy2(session_file, backup_file)
+        TelegramClientWrapper._rotate_existing_backup(backup_file)
+        shutil.copy2(session_file, backup_file)
 
         conn = sqlite3.connect(session_file)
+        backup_table = "sessions_schema_migration_backup"
         migration_failed = False
         try:
-            rows = conn.execute(
-                "SELECT dc_id, server_address, port, auth_key, takeout_id FROM sessions"
-            ).fetchall()
-            conn.execute("ALTER TABLE sessions RENAME TO sessions_legacy")
+            conn.execute(f"DROP TABLE IF EXISTS {backup_table}")
+            conn.execute(f"ALTER TABLE sessions RENAME TO {backup_table}")
             conn.execute(
-                """
-                CREATE TABLE sessions (
-                    dc_id integer primary key,
-                    server_address text,
-                    port integer,
-                    auth_key blob,
-                    takeout_id integer
-                )
-                """
+                "CREATE TABLE sessions ("
+                + ", ".join(column_defs[col] for col in desired_columns)
+                + ")"
             )
+            placeholders = ", ".join("?" for _ in desired_columns)
+            column_list = ", ".join(desired_columns)
             conn.executemany(
-                """
-                INSERT INTO sessions
-                (dc_id, server_address, port, auth_key, takeout_id)
-                VALUES (?, ?, ?, ?, ?)
-                """,
+                f"INSERT INTO sessions ({column_list}) VALUES ({placeholders})",
                 rows,
             )
-            conn.execute("DROP TABLE sessions_legacy")
+            conn.execute(f"DROP TABLE {backup_table}")
             conn.commit()
         except Exception:
             migration_failed = True

@@ -16,6 +16,7 @@ __pycache__/
 .pytest_cache/
 .pytest-tmp/
 .pytest_tmp/
+pytest_tmp/
 .mypy_cache/
 .venv/
 venv/
@@ -32,7 +33,7 @@ pyrightconfig.json
 .understand-anything
 .omo/
 .worktrees/
-CLAUDE.md
+.superpowers/
 # Developer scripts
 condense.js
 condensed.json
