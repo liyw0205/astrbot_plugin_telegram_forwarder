@@ -41,13 +41,22 @@ def parse_proxy_url(proxy_url: str):
     if not parsed.hostname or parsed.port is None:
         raise ValueError("代理 URL 必须包含主机和端口")
 
-    proxy_type = socks.HTTP if parsed.scheme.startswith("http") else socks.SOCKS5
+    scheme = parsed.scheme.lower()
+    if scheme.startswith("http"):
+        proxy_type = socks.HTTP
+    elif scheme.startswith("socks4"):
+        proxy_type = socks.SOCKS4
+    else:
+        proxy_type = socks.SOCKS5
+
     username = unquote(parsed.username) if parsed.username is not None else None
     password = unquote(parsed.password) if parsed.password is not None else None
-    if bool(username) != bool(password):
+    if proxy_type != socks.SOCKS4 and bool(username) != bool(password):
         raise ValueError("代理用户名和密码必须同时填写")
     if username and password:
         return (proxy_type, parsed.hostname, parsed.port, True, username, password)
+    if proxy_type == socks.SOCKS4 and username:
+        return (proxy_type, parsed.hostname, parsed.port, True, username)
     return (proxy_type, parsed.hostname, parsed.port)
 
 api_id_raw = input("请输入 API ID: ").strip()

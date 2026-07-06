@@ -19,7 +19,7 @@ def load_relogin_module(
     module_name = "astrbot_plugin_telegram_forwarder.relogin"
 
     stubbed_modules = {
-        "socks": SimpleNamespace(HTTP=1, SOCKS5=2),
+        "socks": SimpleNamespace(HTTP=1, SOCKS4=3, SOCKS5=2),
         "telethon": SimpleNamespace(TelegramClient=client_factory),
         "telethon.errors": SimpleNamespace(
             SessionPasswordNeededError=SessionPasswordNeededError

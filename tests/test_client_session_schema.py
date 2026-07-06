@@ -19,7 +19,7 @@ def load_client_module(
     module_name = "astrbot_plugin_telegram_forwarder.core.client"
 
     stubbed_modules = {
-        "socks": SimpleNamespace(HTTP=1, SOCKS5=2),
+        "socks": SimpleNamespace(HTTP=1, SOCKS4=3, SOCKS5=2),
         "telethon": SimpleNamespace(
             TelegramClient=client_factory or MagicMock(),
             __version__=telethon_version,
@@ -692,6 +692,26 @@ def test_parse_proxy_url_without_credentials_keeps_short_tuple():
     )
 
     assert proxy == (2, "example.com", 12311)
+
+
+def test_parse_proxy_url_supports_socks4():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_url(
+        "socks4://example.com:12311"
+    )
+
+    assert proxy == (3, "example.com", 12311)
+
+
+def test_parse_proxy_url_supports_socks4_userid():
+    client_module = load_client_module()
+
+    proxy = client_module.TelegramClientWrapper._parse_proxy_url(
+        "socks4://legacy@example.com:12311"
+    )
+
+    assert proxy == (3, "example.com", 12311, True, "legacy")
 
 
 def test_ensure_connected_rebuilds_once_on_wrong_session_id_then_returns_false_if_still_disconnected():
