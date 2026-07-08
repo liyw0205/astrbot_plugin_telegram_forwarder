@@ -19,7 +19,7 @@ def load_relogin_module(
     module_name = "astrbot_plugin_telegram_forwarder.relogin"
 
     stubbed_modules = {
-        "socks": SimpleNamespace(HTTP=1, SOCKS5=2),
+        "socks": SimpleNamespace(HTTP=1, SOCKS4=3, SOCKS5=2),
         "telethon": SimpleNamespace(TelegramClient=client_factory),
         "telethon.errors": SimpleNamespace(
             SessionPasswordNeededError=SessionPasswordNeededError
@@ -67,6 +67,34 @@ async def test_relogin_prompts_for_original_verification_code():
     assert "不要" in code_prompt
     assert "加 1" in code_prompt
     client.sign_in.assert_awaited_once_with("+8613800000000", "12345")
+
+
+@pytest.mark.asyncio
+async def test_relogin_passes_proxy_credentials_to_telethon():
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock()
+    client.is_user_authorized = AsyncMock(return_value=True)
+    client.get_me = AsyncMock(
+        return_value=SimpleNamespace(first_name="Test", username="user")
+    )
+    client_factory = MagicMock(return_value=client)
+
+    relogin_module = load_relogin_module(
+        client_factory,
+        inputs=["123456", "hash", "socks5://admin:wowull@example.com:12311"],
+    )
+
+    await relogin_module.main()
+
+    assert client_factory.call_args.kwargs["proxy"] == (
+        2,
+        "example.com",
+        12311,
+        True,
+        "admin",
+        "wowull",
+    )
 
 
 @pytest.mark.asyncio
