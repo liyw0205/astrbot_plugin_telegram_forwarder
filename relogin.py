@@ -59,6 +59,7 @@ def parse_proxy_url(proxy_url: str):
         return (proxy_type, parsed.hostname, parsed.port, True, username)
     return (proxy_type, parsed.hostname, parsed.port)
 
+
 api_id_raw = input("请输入 API ID: ").strip()
 try:
     api_id = int(api_id_raw)
